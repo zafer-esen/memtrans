@@ -32,8 +32,8 @@ END_LEGAL */
  *  This file contains a configurable cache class
  */
 
-#ifndef PIN_CACHE_H
-#define PIN_CACHE_H
+#ifndef MEMTRANS_CACHE_H
+#define MEMTRANS_CACHE_H
 
 #include <string>
 
@@ -387,6 +387,8 @@ class CACHE : public CACHE_BASE
     bool Access(ADDRINT addr, UINT32 size, ACCESS_TYPE accessType);
     /// Cache access at addr that does not span cache lines
     bool AccessSingleLine(ADDRINT addr, ACCESS_TYPE accessType);
+    void InsAccessSingleLine(ADDRINT addr);
+
     void Flush();
     void ResetStats();
 };
@@ -455,6 +457,27 @@ bool CACHE<SET,MAX_SETS,STORE_ALLOCATION>::AccessSingleLine(ADDRINT addr, ACCESS
 
     return hit;
 }
+
+template <class SET, UINT32 MAX_SETS, UINT32 STORE_ALLOCATION>
+void CACHE<SET,MAX_SETS,STORE_ALLOCATION>::InsAccessSingleLine(ADDRINT addr)
+{
+    CACHE_TAG tag;
+    UINT32 setIndex;
+
+    SplitAddress(addr, tag, setIndex);
+
+    SET & set = _sets[setIndex];
+
+    bool hit = set.Find(tag);
+
+    // on miss, loads always allocate
+    if (!hit)
+        set.Replace(tag);
+
+    _access[ACCESS_TYPE_LOAD][hit]++;
+
+}
+
 /*!
  *  @return true if accessed cache line hits
  */

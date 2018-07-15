@@ -41,7 +41,7 @@ END_LEGAL */
 
 typedef UINT32 CACHE_STATS; // type of cache hit/miss counters
 
-#include "pin_cache.H"
+#include "memtrans_cache.H"
 
 namespace UL3
 {
@@ -112,32 +112,37 @@ UINT32 countTransitions(UINT8* startAddr, UINT32 len, UINT8 busWidth)
   return count;
 }
 
-LOCALFUN VOID CacheAccess(ADDRINT addr, UINT32 size, CACHE_BASE::ACCESS_TYPE accessType)
+/*LOCALFUN VOID CacheAccess(ADDRINT addr, UINT32 size, CACHE_BASE::ACCESS_TYPE accessType)
 {
     // last level unified cache
     const ADDRINT lineSize = ul3.LineSize();
     const ADDRINT notLineMask = ~(lineSize - 1);
     ADDRINT highAddr;
     highAddr = addr + size;
-    if(size>1)
-      std::cout<<"size: "<<size<<"\n"; 
     do{
-      if(!ul3.AccessSingleLine(addr, accessType)){
+      if(!ul3.AccessSingleLine(addr, accessType)){*/
+	// cache miss
+	// first copy the data for transition count
+	/*	PIN_SafeCopy(lineBytes, (void*)addr, (UINT32)lineSize);
+	totalTransitions += countTransitions((UINT8*)lineBytes, (UINT32)lineSize, 8); // bus width assumed 8 bytes
+	L3MissCount++;*//*
+      }
+      addr = (addr & notLineMask) + lineSize;
+      } while (addr < highAddr);
+}*/
+
+LOCALFUN VOID ICacheAccess(ADDRINT addr)
+{
+    // last level unified cache
+    /*if(!*/ul3.InsAccessSingleLine(addr);//){
 	// cache miss
 	// first copy the data for transition count
 	/*	PIN_SafeCopy(lineBytes, (void*)addr, (UINT32)lineSize);
 	totalTransitions += countTransitions((UINT8*)lineBytes, (UINT32)lineSize, 8); // bus width assumed 8 bytes
 	L3MissCount++;*/
-      }
-      addr = (addr & notLineMask) + lineSize;
-      } while (addr < highAddr);
+	//}
 }
 
-LOCALFUN VOID InsRef(ADDRINT addr)
-{
-    const CACHE_BASE::ACCESS_TYPE accessType = CACHE_BASE::ACCESS_TYPE_LOAD;
-    CacheAccess(addr, size, accessType);
-}
 /*
 LOCALFUN VOID MemRef(ADDRINT addr, UINT32 size, CACHE_BASE::ACCESS_TYPE accessType)
 {
@@ -149,7 +154,7 @@ LOCALFUN VOID Instruction(INS ins, VOID *v)
 {
     // all instruction fetches access I-cache
     INS_InsertCall(
-        ins, IPOINT_BEFORE, (AFUNPTR)InsRef,
+        ins, IPOINT_BEFORE, (AFUNPTR)ICacheAccess,
         IARG_INST_PTR,
         IARG_END);
     /*

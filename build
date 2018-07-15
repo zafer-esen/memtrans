@@ -1,4 +1,4 @@
 #!/bin/bash
 # Builds the memory transitions app
 
-make PIN_ROOT=../../.. obj-intel64/allcache.so
+make PIN_ROOT=../../.. obj-intel64/memtrans.so
