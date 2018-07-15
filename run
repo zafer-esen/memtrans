@@ -1,0 +1,4 @@
+#!/bin/bash
+# Runs the memory transitions app
+
+../../../pin -t obj-intel64/allcache.so -- /media/sf_VM_Shared/pin_tutorial/memapp/simple
