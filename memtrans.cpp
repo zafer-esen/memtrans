@@ -39,28 +39,31 @@ END_LEGAL */
 #include "pin.H"
 #include <time.h>
 
+#define INS_SIM
+
 typedef UINT32 CACHE_STATS; // type of cache hit/miss counters
 
 #include "memtrans_cache.H"
 
 namespace UL3
 {
-    // 3rd level unified cache: 16 MB, 64 B lines, direct mapped
-    const UINT32 cacheSize = 16*MEGA;
-    const UINT32 lineSize = 64;
-    const UINT32 associativity = 1;
-    const CACHE_ALLOC::STORE_ALLOCATION allocation = CACHE_ALLOC::STORE_ALLOCATE;
+  // 3rd level unified cache: 16 MB, 64 B lines, direct mapped
+  const UINT32 cacheSize = 16*MEGA;
+  // const UINT32 lineSize = 64;
+  const UINT32 associativity = 1; //do not change forget to change this to 1 if using direct mapped
+  const CACHE_ALLOC::STORE_ALLOCATION allocation = CACHE_ALLOC::STORE_ALLOCATE;
 
-    const UINT32 max_sets = cacheSize / (lineSize * associativity);
+  const UINT32 max_sets = cacheSize / (lineSize * associativity);
 
-    typedef CACHE_DIRECT_MAPPED(max_sets, allocation) CACHE;
+  typedef CACHE_DIRECT_MAPPED(max_sets, allocation) CACHE;
+  //typedef CACHE_ROUND_ROBIN(max_sets, associativity, allocation) CACHE;
 }
-LOCALVAR UL3::CACHE ul3("L3 Unified Cache", UL3::cacheSize, UL3::lineSize, UL3::associativity);
+LOCALVAR UL3::CACHE ul3("L3 Unified Cache", UL3::cacheSize, lineSize, UL3::associativity);
 
-UINT32 L3MissCount = 0;
+/*UINT32 L3MissCount = 0;
 UINT8 * lineBytes;
 UINT8 hamming_lut[256][256];
-UINT32 totalTransitions = 0;
+UINT32 totalTransitions = 0;*/
 
 // finds the hamming distance between two bytes
 uint8_t hamming_dist(uint8_t b1, uint8_t b2)
@@ -93,6 +96,7 @@ LOCALFUN VOID Fini(int code, VOID * v)
 
   std::cerr << ul3;
   std::cout << "L3 miss count: " << L3MissCount << std::endl;
+  std::cout << "L3 evict count: " << L3EvictCount << std::endl;
   std::cout << "Total number of bit transitions: " << totalTransitions << "\n\n";
   std::cout << "Elapsed time: " << elapsed_time << std::endl;
   delete lineBytes;
@@ -112,60 +116,52 @@ UINT32 countTransitions(UINT8* startAddr, UINT32 len, UINT8 busWidth)
   return count;
 }
 
-/*LOCALFUN VOID CacheAccess(ADDRINT addr, UINT32 size, CACHE_BASE::ACCESS_TYPE accessType)
+LOCALFUN VOID DCacheLoad(ADDRINT addr, UINT32 size)
 {
-    // last level unified cache
-    const ADDRINT lineSize = ul3.LineSize();
-    const ADDRINT notLineMask = ~(lineSize - 1);
-    ADDRINT highAddr;
-    highAddr = addr + size;
-    do{
-      if(!ul3.AccessSingleLine(addr, accessType)){*/
-	// cache miss
-	// first copy the data for transition count
-	/*	PIN_SafeCopy(lineBytes, (void*)addr, (UINT32)lineSize);
-	totalTransitions += countTransitions((UINT8*)lineBytes, (UINT32)lineSize, 8); // bus width assumed 8 bytes
-	L3MissCount++;*//*
-      }
-      addr = (addr & notLineMask) + lineSize;
-      } while (addr < highAddr);
-}*/
-
-LOCALFUN VOID ICacheAccess(ADDRINT addr)
-{
-    // last level unified cache
-    /*if(!*/ul3.InsAccessSingleLine(addr);//){
-	// cache miss
-	// first copy the data for transition count
-	/*	PIN_SafeCopy(lineBytes, (void*)addr, (UINT32)lineSize);
-	totalTransitions += countTransitions((UINT8*)lineBytes, (UINT32)lineSize, 8); // bus width assumed 8 bytes
-	L3MissCount++;*/
-	//}
+  ADDRINT highAddr;
+  highAddr = addr + size;
+  do{
+    ul3.LdAccessSingleLine(addr);
+    addr = (addr & notLineMask) + lineSize;
+    } while (addr < highAddr);
 }
 
-/*
-LOCALFUN VOID MemRef(ADDRINT addr, UINT32 size, CACHE_BASE::ACCESS_TYPE accessType)
+LOCALFUN VOID DCacheStore(ADDRINT addr, UINT32 size)
 {
-    // second level unified Cache
-    CacheAccess(addr, size, accessType);
-    }*/
+  // last level unified cache
+  ADDRINT highAddr;
+  highAddr = addr + size;
+  do{
+    ul3.StAccessSingleLine(addr);
+    addr = (addr & notLineMask) + lineSize;
+  } while (addr < highAddr);
+}
+
+#ifdef INS_SIM
+LOCALFUN VOID ICacheAccess(ADDRINT addr)
+{
+  ul3.LdAccessSingleLine(addr);
+}
+#endif
+
 
 LOCALFUN VOID Instruction(INS ins, VOID *v)
 {
     // all instruction fetches access I-cache
-    INS_InsertCall(
+#ifdef INS_SIM  
+  INS_InsertCall(
         ins, IPOINT_BEFORE, (AFUNPTR)ICacheAccess,
         IARG_INST_PTR,
         IARG_END);
-    /*
+#endif
+    
     if (INS_IsMemoryRead(ins) && INS_IsStandardMemop(ins))
     {
       // only predicated-on memory instructions access D-cache
       INS_InsertPredicatedCall(
-			       ins, IPOINT_BEFORE, (AFUNPTR)MemRef,
+			       ins, IPOINT_BEFORE, (AFUNPTR)DCacheLoad,
 			       IARG_MEMORYREAD_EA,
 			       IARG_MEMORYREAD_SIZE,
-			       IARG_UINT32, CACHE_BASE::ACCESS_TYPE_LOAD,
 			       IARG_END);
     }
 
@@ -173,12 +169,11 @@ LOCALFUN VOID Instruction(INS ins, VOID *v)
       {
         // only predicated-on memory instructions access D-cache
         INS_InsertPredicatedCall(
-				 ins, IPOINT_BEFORE, (AFUNPTR)MemRef,
+				 ins, IPOINT_BEFORE, (AFUNPTR)DCacheStore,
 				 IARG_MEMORYWRITE_EA,
 				 IARG_MEMORYWRITE_SIZE,
-				 IARG_UINT32, CACHE_BASE::ACCESS_TYPE_STORE,
 				 IARG_END);
-				 }*/
+				 }
 }
 
 GLOBALFUN int main(int argc, char *argv[])

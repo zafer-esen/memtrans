@@ -35,6 +35,16 @@ END_LEGAL */
 #ifndef MEMTRANS_CACHE_H
 #define MEMTRANS_CACHE_H
 
+const UINT32 lineSize = 64;
+const ADDRINT notLineMask = ~(((ADDRINT)(lineSize)) - 1);
+UINT32 L3MissCount = 0;
+UINT32 L3EvictCount = 0;
+UINT8 * lineBytes;
+UINT8 hamming_lut[256][256];
+UINT32 totalTransitions = 0;
+
+UINT32 countTransitions(UINT8* startAddr, UINT32 len, UINT8 busWidth);
+
 #include <string>
 
 #include "pin_util.H"
@@ -102,13 +112,16 @@ namespace CACHE_SET
 /*!
  *  @brief Cache set direct mapped
  */
-class DIRECT_MAPPED
-{
+  class DIRECT_MAPPED
+  {
   private:
-    CACHE_TAG _tag;
+    //CACHE_TAG _tag;
 
   public:
-    DIRECT_MAPPED(UINT32 associativity = 1) { ASSERTX(associativity == 1); }
+    CACHE_TAG _tag;
+    bool _isstore;
+    ADDRINT _addr;
+    DIRECT_MAPPED(UINT32 associativity = 1) { ASSERTX(associativity == 1); _isstore = false; _addr = 0;}
 
     VOID SetAssociativity(UINT32 associativity) { ASSERTX(associativity == 1); }
     UINT32 GetAssociativity(UINT32 associativity) { return 1; }
@@ -116,7 +129,7 @@ class DIRECT_MAPPED
     UINT32 Find(CACHE_TAG tag) { return(_tag == tag); }
     VOID Replace(CACHE_TAG tag) { _tag = tag; }
     VOID Flush() { _tag = 0; }
-};
+  };
 
 /*!
  *  @brief Cache set with round robin replacement
@@ -152,19 +165,35 @@ class ROUND_ROBIN
 
     UINT32 Find(CACHE_TAG tag)
     {
-        bool result = true;
-
+		bool result = false;
         for (INT32 index = _tagsLastIndex; index >= 0; index--)
         {
-            // this is an ugly micro-optimization, but it does cause a
-            // tighter assembly loop for ARM that way ...
-            if(_tags[index] == tag) goto end;
+            if(_tags[index] == tag){
+				result = true;
+				break;
+			}
         }
-        result = false;
-
-        end: return result;
+        return result;
     }
 
+	UINT32 FindReplace(CACHE_TAG tag)
+    {
+		bool result = false;
+        for (INT32 index = _tagsLastIndex; index >= 0; index--)
+        {
+            if(_tags[index] == tag){
+				result = true;
+				
+				_tags[_nextReplaceIndex] = tag;
+				// condition typically faster than modulo
+				_nextReplaceIndex = (_nextReplaceIndex == 0 ? _tagsLastIndex : _nextReplaceIndex - 1);
+				
+				break;
+			}
+        }
+        return result;
+    }
+	
     VOID Replace(CACHE_TAG tag)
     {
         // g++ -O3 too dumb to do CSE on following lines?!
@@ -213,18 +242,22 @@ class CACHE_BASE
     static const UINT32 HIT_MISS_NUM = 2;
     CACHE_STATS _access[ACCESS_TYPE_NUM][HIT_MISS_NUM];
 
-  private:
-    // input params
+	
+	// input params
     const std::string _name;
     const UINT32 _cacheSize;
     const UINT32 _lineSize;
     const UINT32 _associativity;
     UINT32 _numberOfFlushes;
     UINT32 _numberOfResets;
-
-    // computed params
+	// computed params
     const UINT32 _lineShift;
     const UINT32 _setIndexMask;
+
+	
+  private:
+    
+
 
     CACHE_STATS SumAccess(bool hit) const
     {
@@ -386,8 +419,8 @@ class CACHE : public CACHE_BASE
     /// Cache access from addr to addr+size-1
     bool Access(ADDRINT addr, UINT32 size, ACCESS_TYPE accessType);
     /// Cache access at addr that does not span cache lines
-    bool AccessSingleLine(ADDRINT addr, ACCESS_TYPE accessType);
-    void InsAccessSingleLine(ADDRINT addr);
+    void LdAccessSingleLine(ADDRINT addr);
+    void StAccessSingleLine(ADDRINT addr);
 
     void Flush();
     void ResetStats();
@@ -432,50 +465,62 @@ bool CACHE<SET,MAX_SETS,STORE_ALLOCATION>::Access(ADDRINT addr, UINT32 size, ACC
     return allHit;
 }
 
-/*!
- *  @return true if accessed cache line hits
- */
 template <class SET, UINT32 MAX_SETS, UINT32 STORE_ALLOCATION>
-bool CACHE<SET,MAX_SETS,STORE_ALLOCATION>::AccessSingleLine(ADDRINT addr, ACCESS_TYPE accessType)
+void CACHE<SET,MAX_SETS,STORE_ALLOCATION>::LdAccessSingleLine(ADDRINT addr)
 {
-    CACHE_TAG tag;
-    UINT32 setIndex;
+  CACHE_TAG tag = addr >> _lineShift;;
+  UINT32 setIndex = tag & _setIndexMask;
 
-    SplitAddress(addr, tag, setIndex);
+  SET &set = _sets[setIndex];
 
-    SET & set = _sets[setIndex];
+  bool hit = set._tag == tag;
 
-    bool hit = set.Find(tag);
-
-    // on miss, loads always allocate, stores optionally
-    if ( (! hit) && (accessType == ACCESS_TYPE_LOAD || STORE_ALLOCATION == CACHE_ALLOC::STORE_ALLOCATE))
-    {
-        set.Replace(tag);
+  if (!hit){
+    if(set._isstore){ //if the set was occupied and was containing a store op, we evict the previous cacheline (i.e. memory write)
+      // get statistics from set._addr here
+      PIN_SafeCopy(lineBytes, (void*)set._addr, (UINT32)lineSize);
+      totalTransitions += countTransitions((UINT8*)lineBytes, (UINT32)lineSize, 8); // bus width assumed 8 bytes
+      L3EvictCount++;
     }
+    // update the cache to hold the new tag, new addr and set it to valid
+    PIN_SafeCopy(lineBytes, (void*)addr, (UINT32)lineSize);
+    totalTransitions += countTransitions((UINT8*)lineBytes, (UINT32)lineSize, 8); // bus width assumed 8 bytes
+    L3MissCount++;
 
-    _access[accessType][hit]++;
-
-    return hit;
+    set._addr = addr;
+    set._tag = tag;		
+    set._isstore = false; //this is not a store operation, so we will not care when it is evicted 
+  }
+  _access[ACCESS_TYPE_LOAD][hit]++;
 }
 
 template <class SET, UINT32 MAX_SETS, UINT32 STORE_ALLOCATION>
-void CACHE<SET,MAX_SETS,STORE_ALLOCATION>::InsAccessSingleLine(ADDRINT addr)
+void CACHE<SET,MAX_SETS,STORE_ALLOCATION>::StAccessSingleLine(ADDRINT addr)
 {
-    CACHE_TAG tag;
-    UINT32 setIndex;
+  CACHE_TAG tag = addr >> _lineShift;;
+  UINT32 setIndex = tag & _setIndexMask;
 
-    SplitAddress(addr, tag, setIndex);
+  SET &set = _sets[setIndex];
 
-    SET & set = _sets[setIndex];
+  bool hit = set._tag == tag;
 
-    bool hit = set.Find(tag);
+  if (!hit){
+    if(set._isstore){ //if the set was occupied and was containing a store op, we evict the previous cacheline (i.e. memory write)
+      // get statistics from set._addr here
+      PIN_SafeCopy(lineBytes, (void*)set._addr, (UINT32)lineSize);
+      totalTransitions += countTransitions((UINT8*)lineBytes, (UINT32)lineSize, 8); // bus width assumed 8 bytes
+      L3EvictCount++;
+    }
+    // update the cache to hold the new tag, new addr and set it to valid
+    PIN_SafeCopy(lineBytes, (void*)addr, (UINT32)lineSize);
+    totalTransitions += countTransitions((UINT8*)lineBytes, (UINT32)lineSize, 8); // bus width assumed 8 bytes
+    L3MissCount++;
 
-    // on miss, loads always allocate
-    if (!hit)
-        set.Replace(tag);
-
-    _access[ACCESS_TYPE_LOAD][hit]++;
-
+    set._addr = addr;
+    set._tag = tag;		
+    set._isstore = true; //this is not a store operation, so we will not care when it is evicted 
+  }
+  _access[ACCESS_TYPE_STORE][hit]++;
 }
 
 /*!
