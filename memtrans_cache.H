@@ -43,7 +43,19 @@ UINT8 * lineBytes;
 UINT8 hamming_lut[256][256];
 UINT32 totalTransitions = 0;
 
-UINT32 countTransitions(UINT8* startAddr, UINT32 len, UINT8 busWidth);
+//assume: busWidth * N = len
+static inline UINT32 countTransitions(UINT8* startAddr, UINT32 len, UINT8 busWidth)
+{
+  UINT32 count = 0;
+  UINT8* b1;
+  b1 = startAddr;
+  for (UINT32 i=0; i<(len/busWidth-1); ++i){
+    for (UINT32 j=0; j<busWidth; ++j)
+      count += hamming_lut[*(b1+j)][*((b1+j)+busWidth)];
+    b1 += busWidth;
+  }
+  return count;
+}
 
 #include <string>
 
@@ -468,7 +480,7 @@ bool CACHE<SET,MAX_SETS,STORE_ALLOCATION>::Access(ADDRINT addr, UINT32 size, ACC
 template <class SET, UINT32 MAX_SETS, UINT32 STORE_ALLOCATION>
 void CACHE<SET,MAX_SETS,STORE_ALLOCATION>::LdAccessSingleLine(ADDRINT addr)
 {
-  CACHE_TAG tag = addr >> _lineShift;;
+  CACHE_TAG tag = addr >> _lineShift;
   UINT32 setIndex = tag & _setIndexMask;
 
   SET &set = _sets[setIndex];
@@ -491,7 +503,7 @@ void CACHE<SET,MAX_SETS,STORE_ALLOCATION>::LdAccessSingleLine(ADDRINT addr)
     set._tag = tag;		
     set._isstore = false; //this is not a store operation, so we will not care when it is evicted 
   }
-  _access[ACCESS_TYPE_LOAD][hit]++;
+  //_access[ACCESS_TYPE_LOAD][hit]++;
 }
 
 template <class SET, UINT32 MAX_SETS, UINT32 STORE_ALLOCATION>
@@ -518,9 +530,13 @@ void CACHE<SET,MAX_SETS,STORE_ALLOCATION>::StAccessSingleLine(ADDRINT addr)
 
     set._addr = addr;
     set._tag = tag;		
-    set._isstore = true; //this is not a store operation, so we will not care when it is evicted 
+    set._isstore = true; 
   }
-  _access[ACCESS_TYPE_STORE][hit]++;
+  else{
+    set._isstore = true; //this handles store after load operations
+  }
+
+  //_access[ACCESS_TYPE_STORE][hit]++;
 }
 
 /*!
