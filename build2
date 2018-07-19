@@ -1,0 +1,4 @@
+#!/bin/bash
+# Builds the memory transitions app
+mkdir obj-intel64
+make PIN_ROOT=../../.. obj-intel64/memtrans2.so

@@ -1,0 +1,4 @@
+#!/bin/bash
+# Runs the memory transitions app
+
+../../../pin -t obj-intel64/memtrans2.so -- ls
