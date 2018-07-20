@@ -50,8 +50,7 @@ namespace UL3
   // 3rd level unified cache: 16 MB, 64 B lines, direct mapped
   const UINT32 cacheSize = 16*MEGA;
   const UINT32 lineSize = 64;
-  const CACHE_ALLOC::STORE_ALLOCATION allocation = CACHE_ALLOC::STORE_ALLOCATE;
-
+  const ADDRINT notLineMask = ~(((ADDRINT)(lineSize)) - 1);
   const UINT32 max_sets = cacheSize / (lineSize);
 }
 
@@ -60,13 +59,17 @@ LOCALFUN VOID Fini(int code, VOID * v)
 {
   clock_t end = clock() ;
   double elapsed_time = (end-start)/(double)CLOCKS_PER_SEC ;
-
+  double bitEntropy = calcBitEntropy(UL3::lineSize, 8);
   //std::cerr << ul3;
   std::cout << "L3 miss count: " << L3MissCount << std::endl;
   std::cout << "L3 store evict count: " << L3EvictCount << std::endl;
-  std::cout << "Total number of bit transitions: " << totalTransitions << "\n\n";
+  std::cout << "Total number of bit transitions: " << totalTransitions << "\n";
+  std::cout << "Bit entropy: " << bitEntropy << "\n\n";
   std::cout << "Elapsed time: " << elapsed_time << std::endl;
+  
+  
   delete lineBytes;
+  cleanupCache();
 }
 
 LOCALFUN VOID CacheLoad(ADDRINT addr, UINT32 size)
@@ -74,8 +77,8 @@ LOCALFUN VOID CacheLoad(ADDRINT addr, UINT32 size)
   ADDRINT highAddr;
   highAddr = addr + size;
   do{
-      ul3.LdAccessSingleLine(addr);
-      addr = (addr & notLineMask) + lineSize;
+      LdAccessSingleLine(addr);
+      addr = (addr & UL3::notLineMask) + UL3::lineSize;
     } while (addr < highAddr);
 }
 
@@ -84,8 +87,8 @@ LOCALFUN VOID CacheStore(ADDRINT addr, UINT32 size)
   ADDRINT highAddr;
   highAddr = addr + size;
   do{
-    ul3.StAccessSingleLine(addr);
-    addr = (addr & notLineMask) + lineSize;
+    StAccessSingleLine(addr);
+    addr = (addr & UL3::notLineMask) + UL3::lineSize;
   } while (addr < highAddr);
 }
 
@@ -113,7 +116,7 @@ LOCALFUN VOID Instruction(INS ins, VOID *v)
     {
       // only predicated-on memory instructions access D-cache
       UINT32 size = INS_MemoryReadSize(ins);
-      if(size <= lineSize){
+      if(size <= UL3::lineSize){
 	INS_InsertPredicatedCall(
 			       ins, IPOINT_BEFORE, (AFUNPTR)CacheLoadSingle,
 			       IARG_MEMORYREAD_EA,
@@ -132,7 +135,7 @@ LOCALFUN VOID Instruction(INS ins, VOID *v)
       {
         // only predicated-on memory instructions access D-cache
 	UINT32 size = INS_MemoryWriteSize(ins);
-	if(size <= lineSize){
+	if(size <= UL3::lineSize){
 	  INS_InsertPredicatedCall(
 				 ins, IPOINT_BEFORE, (AFUNPTR)CacheStoreSingle,
 				 IARG_MEMORYWRITE_EA,
@@ -154,8 +157,8 @@ GLOBALFUN int main(int argc, char *argv[])
 
   PIN_Init(argc, argv);
 	
-  initCache("L3 Unified Cache", UL3::cacheSize, UL3::lineSize); 
-  lineBytes = new UINT8[ul3.LineSize()];
+  initCache(UL3::cacheSize, UL3::lineSize, UL3::max_sets); 
+  lineBytes = new UINT8[UL3::lineSize];
   fill_hamming_lut();
 
   INS_AddInstrumentFunction(Instruction, 0);

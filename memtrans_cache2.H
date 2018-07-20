@@ -35,14 +35,14 @@ END_LEGAL */
 #ifndef MEMTRANS_CACHE2_H
 #define MEMTRANS_CACHE2_H
 
-const ADDRINT notLineMask = ~(((ADDRINT)(lineSize)) - 1);
 UINT32 L3MissCount = 0;
 UINT32 L3EvictCount = 0;
 UINT8 * lineBytes;
 UINT8 hamming_lut[256][256];
-UINT32 totalTransitions = 0;
+UINT64 totalTransitions = 0;
 
 //assume: busWidth * N = len
+UINT64 countTransitionsCalled = 0;
 static inline UINT32 countTransitions(UINT8* startAddr, UINT32 len, UINT8 busWidth)
 {
   UINT32 count = 0;
@@ -53,7 +53,13 @@ static inline UINT32 countTransitions(UINT8* startAddr, UINT32 len, UINT8 busWid
       count += hamming_lut[*(b1+j)][*((b1+j)+busWidth)];
     b1 += busWidth;
   }
+  countTransitionsCalled++;
   return count;
+}
+
+static inline double calcBitEntropy(UINT32 len, UINT8 busWidth)
+{
+  return (double)totalTransitions / ((len/busWidth-1)*busWidth*8*countTransitionsCalled);
 }
 
 #include <string>
@@ -139,36 +145,40 @@ class DIRECT_MAPPED
     bool _isstore;
     ADDRINT _addr;
     DIRECT_MAPPED() { 
-						ASSERTX(associativity == 1); 
 						_isstore = false; 
 						_addr = 0;
 						_tag = 0;
 					}
 };
 
-DIRECT_MAPPED _sets[MAX_SETS];
+DIRECT_MAPPED * _sets;
 
+UINT32 _lineSize;
 // computed params
 UINT32 _lineShift;
 UINT32 _setIndexMask;
 
-void initCache(std::string name, UINT32 cacheSize, UINT32 lineSize)
+void initCache(UINT32 cacheSize, UINT32 lineSize, UINT32 max_sets)
 {
-	_name = name;
-	_cacheSize = cacheSize;
 	_lineSize = lineSize;
 	_lineShift = FloorLog2(lineSize);
 	_setIndexMask = (cacheSize / lineSize) - 1;
 	ASSERTX(IsPower2(_lineSize));
-    ASSERTX(IsPower2(_setIndexMask + 1));
+     ASSERTX(IsPower2(_setIndexMask + 1));
+     _sets = new DIRECT_MAPPED[max_sets];
+}
+
+void cleanupCache(void)
+{
+  delete _sets;
 }
    
 static inline void LdAccessSingleLine(ADDRINT addr)
 {
-  CACHE_TAG tag = addr >> _lineShift;
+  ADDRINT tag = addr >> _lineShift;
   UINT32 setIndex = tag & _setIndexMask;
 
-  SET &set = _sets[setIndex];
+  DIRECT_MAPPED &set = _sets[setIndex];
 
   bool hit = set._tag == tag;
 
@@ -188,15 +198,14 @@ static inline void LdAccessSingleLine(ADDRINT addr)
     set._tag = tag;		
     set._isstore = false; //this is not a store operation, so we will not care when it is evicted 
   }
-  _access[ACCESS_TYPE_LOAD][hit]++;
 }
 
 static inline void StAccessSingleLine(ADDRINT addr)
 {
-  CACHE_TAG tag = addr >> _lineShift;;
+  ADDRINT tag = addr >> _lineShift;;
   UINT32 setIndex = tag & _setIndexMask;
 
-  SET &set = _sets[setIndex];
+  DIRECT_MAPPED &set = _sets[setIndex];
 
   bool hit = set._tag == tag;
 
@@ -219,8 +228,6 @@ static inline void StAccessSingleLine(ADDRINT addr)
   else{
     set._isstore = true; //this handles store after load operations
   }
-
-  _access[ACCESS_TYPE_STORE][hit]++;
 }
 
 #endif // memtrans_cache2

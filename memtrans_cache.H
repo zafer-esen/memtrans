@@ -41,7 +41,7 @@ UINT32 L3MissCount = 0;
 UINT32 L3EvictCount = 0;
 UINT8 * lineBytes;
 UINT8 hamming_lut[256][256];
-UINT32 totalTransitions = 0;
+UINT64 totalTransitions = 0;
 
 //assume: busWidth * N = len
 static inline UINT32 countTransitions(UINT8* startAddr, UINT32 len, UINT8 busWidth)
