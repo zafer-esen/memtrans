@@ -50,8 +50,9 @@ static inline UINT32 countTransitions(UINT8* startAddr, UINT32 len, UINT8 busWid
   UINT32 count = 0;
   UINT8* curWord;
   UINT8 b0, b1;
+  UINT32 num_words = len/busWidth-1;
   curWord = startAddr;
-  for (UINT32 i=0; i<(len/busWidth-1); ++i){
+  for (UINT32 i=0; i<num_words; ++i){
     for (UINT32 j=0; j<busWidth; ++j){
       count += hamming_lut[*(curWord+j)][*((curWord+j)+busWidth)];
 	  b0 = *(curWord + j);
