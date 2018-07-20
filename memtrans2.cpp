@@ -65,8 +65,22 @@ LOCALFUN VOID Fini(int code, VOID * v)
   std::cout << "L3 store evict count: " << L3EvictCount << std::endl;
   std::cout << "Total number of bit transitions: " << totalTransitions << "\n";
   std::cout << "Bit entropy: " << bitEntropy << "\n\n";
-  std::cout << "Elapsed time: " << elapsed_time << std::endl;
   
+  std::cout << "Other metrics" << std::endl;
+  std::cout << "Number of bytes with value:" << std::endl;
+  UINT64 totalBytes = 0;
+  for (int i = 0; i < 256; ++i) {
+	totalBytes += counts[i];
+	std::cout << i << ": " << counts[i] << std::endl;
+  }
+	
+  std::cout << "Number of times every byte is repeated:" << std::endl;
+  for (int i = 0; i < 256; ++i)
+  std::cout << i << ": " << same_bytes[i] << std::endl;
+	
+  std::cout << "Total number of bytes transferred: " << totalBytes << std::endl << std::endl;
+  
+  std::cout << "Elapsed time: " << elapsed_time << std::endl;
   
   delete lineBytes;
   cleanupCache();

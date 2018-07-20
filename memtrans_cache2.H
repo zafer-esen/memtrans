@@ -40,18 +40,30 @@ UINT32 L3EvictCount = 0;
 UINT8 * lineBytes;
 UINT8 hamming_lut[256][256];
 UINT64 totalTransitions = 0;
+UINT64 counts[256] = { 0 }; //number of times every byte value appears in transfers
+UINT64 same_bytes[256] = { 0 }; //number of times a byte value repeats in transfers
 
 //assume: busWidth * N = len
 UINT64 countTransitionsCalled = 0;
 static inline UINT32 countTransitions(UINT8* startAddr, UINT32 len, UINT8 busWidth)
 {
   UINT32 count = 0;
-  UINT8* b1;
-  b1 = startAddr;
+  UINT8* curWord;
+  UINT8 b0, b1;
+  curWord = startAddr;
   for (UINT32 i=0; i<(len/busWidth-1); ++i){
-    for (UINT32 j=0; j<busWidth; ++j)
-      count += hamming_lut[*(b1+j)][*((b1+j)+busWidth)];
-    b1 += busWidth;
+    for (UINT32 j=0; j<busWidth; ++j){
+      count += hamming_lut[*(curWord+j)][*((curWord+j)+busWidth)];
+	  b0 = *(curWord + j);
+	  b1 = *((curWord + j) + busWidth);
+	  counts[b0]++;
+		same_bytes[b0] += (j>0) &&  (b0 == *((curWord + j - 1)));
+		if (i == num_words - 1) {
+		  counts[b1]++;
+		  same_bytes[b1] += (j>0) && (b1 == *((curWord + j - 1) + busWidth));
+		}
+	}
+    curWord += busWidth;
   }
   countTransitionsCalled++;
   return count;
