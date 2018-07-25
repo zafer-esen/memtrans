@@ -41,7 +41,15 @@ UINT8 * lineBytes;
 UINT8 hamming_lut[256][256];
 UINT64 totalTransitions = 0;
 UINT64 counts[256] = { 0 }; //number of times every byte value appears in transfers
-UINT64 same_bytes[256] = { 0 }; //number of times a byte value repeats in transfers
+UINT64 same_bytes[256] = { 0 }; //number of times a byte value repeats in transfers (bus-wise)
+UINT64 transition_counts[256][256]; //counts the transitioning byte values (transfer-wise)
+/*
+  -----> transfer-wise		
+  t0	t1	t2	...	^ bus-wise
+  b00	b01	b02	...	|
+  b10	b11	b12	...	|
+  ...	...	...	...	|
+*/
 
 //assume: busWidth * N = len
 UINT64 countTransitionsCalled = 0;
@@ -58,6 +66,7 @@ static inline UINT32 countTransitions(UINT8* startAddr, UINT32 len, UINT8 busWid
 	  b0 = *(curWord + j);
 	  b1 = *((curWord + j) + busWidth);
 	  counts[b0]++;
+	  transition_counts[b0][b1]++;
 		same_bytes[b0] += (j>0) &&  (b0 == *((curWord + j - 1)));
 		if (i == num_words - 1) {
 		  counts[b1]++;

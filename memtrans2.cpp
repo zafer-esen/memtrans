@@ -67,6 +67,8 @@ LOCALFUN VOID Fini(int code, VOID * v)
   std::cout << "Bit entropy: " << bitEntropy << "\n\n";
   
   std::cout << "Other metrics" << std::endl;
+  
+  // DO NOT MODIFY BELOW CODE OUTPUT STRUCTURE
   std::cout << "Number of bytes with value:" << std::endl;
   UINT64 totalBytes = 0;
   for (int i = 0; i < 256; ++i) {
@@ -77,7 +79,13 @@ LOCALFUN VOID Fini(int code, VOID * v)
   std::cout << "Number of times every byte is repeated:" << std::endl;
   for (int i = 0; i < 256; ++i)
   std::cout << i << ": " << same_bytes[i] << std::endl;
-	
+
+  for (int i = 0; i < 256; ++i)
+    for (int j = 0; j < 256; ++j)
+  std::cout << i << "," << j << ": " << transition_counts[i][j] << std::endl;
+  
+  // DO NOT MODIFY ABOVE CODE OUTPUTSTRUCTURE
+  
   std::cout << "Total number of bytes transferred: " << totalBytes << std::endl << std::endl;
   
   std::cout << "Elapsed time: " << elapsed_time << std::endl;
