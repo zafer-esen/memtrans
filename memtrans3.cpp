@@ -50,12 +50,12 @@ ofstream out;
 
 
 KNOB<string> knob_output(KNOB_MODE_WRITEONCE,    "pintool",
-                         "o", "avdc.out", "specify log file name");
+                         "o", "memtrans3.out", "specify log file name");
 
-KNOB<string> knob_size(KNOB_MODE_WRITEONCE, "pintool",
-                       "s", "4096", "Cache size (bytes)");
+KNOB<UINT32> knob_size(KNOB_MODE_WRITEONCE, "pintool",
+                       "s", "32768", "Cache size (bytes)");
 KNOB<UINT32> knob_associativity(KNOB_MODE_WRITEONCE, "pintool", "a", "1", "Cache associativity");
-KNOB<string> knob_line_size(KNOB_MODE_WRITEONCE, "pintool",
+KNOB<UINT32> knob_line_size(KNOB_MODE_WRITEONCE, "pintool",
                             "l", "64", "Cache line size");
 
   // Now containing knob inputs from cmd
@@ -200,7 +200,7 @@ LOCALFUN VOID Instruction(INS ins, VOID *v)
 
 void initCacheParams(void)
 {
-  cacheSize = knob_size.Value().UINT32;
+  cacheSize = knob_size.Value();
   lineSize = knob_line_size.Value();
   notLineMask = ~(((ADDRINT)(lineSize)) - 1);
   max_sets = cacheSize / (lineSize);
