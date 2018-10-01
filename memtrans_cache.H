@@ -32,29 +32,56 @@ END_LEGAL */
  *  This file contains a configurable cache class
  */
 
-#ifndef MEMTRANS_CACHE_H
-#define MEMTRANS_CACHE_H
+#ifndef MEMTRANS_CACHE2_H
+#define MEMTRANS_CACHE2_H
 
-const UINT32 lineSize = 64;
-const ADDRINT notLineMask = ~(((ADDRINT)(lineSize)) - 1);
 UINT32 L3MissCount = 0;
 UINT32 L3EvictCount = 0;
 UINT8 * lineBytes;
 UINT8 hamming_lut[256][256];
 UINT64 totalTransitions = 0;
+UINT64 counts[256] = { 0 }; //number of times every byte value appears in transfers
+UINT64 same_bytes[256] = { 0 }; //number of times a byte value repeats in transfers (bus-wise)
+UINT64 transition_counts[256][256]; //counts the transitioning byte values (transfer-wise)
+/*
+  -----> transfer-wise		
+  t0	t1	t2	...	^ bus-wise
+  b00	b01	b02	...	|
+  b10	b11	b12	...	|
+  ...	...	...	...	|
+*/
 
 //assume: busWidth * N = len
+UINT64 countTransitionsCalled = 0;
 static inline UINT32 countTransitions(UINT8* startAddr, UINT32 len, UINT8 busWidth)
 {
   UINT32 count = 0;
-  UINT8* b1;
-  b1 = startAddr;
-  for (UINT32 i=0; i<(len/busWidth-1); ++i){
-    for (UINT32 j=0; j<busWidth; ++j)
-      count += hamming_lut[*(b1+j)][*((b1+j)+busWidth)];
-    b1 += busWidth;
+  UINT8* curWord;
+  UINT8 b0, b1;
+  UINT32 num_words = len/busWidth-1;
+  curWord = startAddr;
+  for (UINT32 i=0; i<num_words; ++i){
+    for (UINT32 j=0; j<busWidth; ++j){
+      count += hamming_lut[*(curWord+j)][*((curWord+j)+busWidth)];
+	  b0 = *(curWord + j);
+	  b1 = *((curWord + j) + busWidth);
+	  counts[b0]++;
+	  transition_counts[b0][b1]++;
+		same_bytes[b0] += (j>0) &&  (b0 == *((curWord + j - 1)));
+		if (i == num_words - 1) {
+		  counts[b1]++;
+		  same_bytes[b1] += (j>0) && (b1 == *((curWord + j - 1) + busWidth));
+		}
+	}
+    curWord += busWidth;
   }
+  countTransitionsCalled++;
   return count;
+}
+
+static inline double calcBitEntropy(UINT32 len, UINT8 busWidth)
+{
+  return (double)totalTransitions / ((len/busWidth-1)*busWidth*8*countTransitionsCalled);
 }
 
 #include <string>
@@ -100,433 +127,139 @@ static inline INT32 CeilLog2(UINT32 n)
     return FloorLog2(n - 1) + 1;
 }
 
-/*!
- *  @brief Cache tag - self clearing on creation
- */
-class CACHE_TAG
+// finds the hamming distance between two bytes
+uint8_t hamming_dist(uint8_t b1, uint8_t b2)
 {
-  private:
-    ADDRINT _tag;
+  // xor to get the differing bits in a byte
+  uint8_t diff = b1 ^ b2;
 
-  public:
-    CACHE_TAG(ADDRINT tag = 0) { _tag = tag; }
-    bool operator==(const CACHE_TAG &right) const { return _tag == right._tag; }
-    operator ADDRINT() const { return _tag; }
-};
-
-
-/*!
- * Everything related to cache sets
- */
-namespace CACHE_SET
-{
-
-/*!
- *  @brief Cache set direct mapped
- */
-  class DIRECT_MAPPED
-  {
-  private:
-    //CACHE_TAG _tag;
-
-  public:
-    CACHE_TAG _tag;
-    bool _isstore;
-    ADDRINT _addr;
-    DIRECT_MAPPED(UINT32 associativity = 1) { ASSERTX(associativity == 1); _isstore = false; _addr = 0;}
-
-    VOID SetAssociativity(UINT32 associativity) { ASSERTX(associativity == 1); }
-    UINT32 GetAssociativity(UINT32 associativity) { return 1; }
-
-    UINT32 Find(CACHE_TAG tag) { return(_tag == tag); }
-    VOID Replace(CACHE_TAG tag) { _tag = tag; }
-    VOID Flush() { _tag = 0; }
-  };
-
-/*!
- *  @brief Cache set with round robin replacement
- */
-template <UINT32 MAX_ASSOCIATIVITY = 4>
-class ROUND_ROBIN
-{
-  private:
-    CACHE_TAG _tags[MAX_ASSOCIATIVITY];
-    UINT32 _tagsLastIndex;
-    UINT32 _nextReplaceIndex;
-
-  public:
-    ROUND_ROBIN(UINT32 associativity = MAX_ASSOCIATIVITY)
-      : _tagsLastIndex(associativity - 1)
+  // Brian Kernighan's algorithm to count the number of bits in a byte
+  uint8_t count = 0;
+  while (diff)
     {
-        ASSERTX(associativity <= MAX_ASSOCIATIVITY);
-        _nextReplaceIndex = _tagsLastIndex;
-
-        for (INT32 index = _tagsLastIndex; index >= 0; index--)
-        {
-            _tags[index] = CACHE_TAG(0);
-        }
+      ++count;
+      diff &= diff - 1;
     }
-
-    VOID SetAssociativity(UINT32 associativity)
-    {
-        ASSERTX(associativity <= MAX_ASSOCIATIVITY);
-        _tagsLastIndex = associativity - 1;
-        _nextReplaceIndex = _tagsLastIndex;
-    }
-    UINT32 GetAssociativity(UINT32 associativity) { return _tagsLastIndex + 1; }
-
-    UINT32 Find(CACHE_TAG tag)
-    {
-		bool result = false;
-        for (INT32 index = _tagsLastIndex; index >= 0; index--)
-        {
-            if(_tags[index] == tag){
-				result = true;
-				break;
-			}
-        }
-        return result;
-    }
-
-	UINT32 FindReplace(CACHE_TAG tag)
-    {
-		bool result = false;
-        for (INT32 index = _tagsLastIndex; index >= 0; index--)
-        {
-            if(_tags[index] == tag){
-				result = true;
-				
-				_tags[_nextReplaceIndex] = tag;
-				// condition typically faster than modulo
-				_nextReplaceIndex = (_nextReplaceIndex == 0 ? _tagsLastIndex : _nextReplaceIndex - 1);
-				
-				break;
-			}
-        }
-        return result;
-    }
-	
-    VOID Replace(CACHE_TAG tag)
-    {
-        // g++ -O3 too dumb to do CSE on following lines?!
-        const UINT32 index = _nextReplaceIndex;
-
-        _tags[index] = tag;
-        // condition typically faster than modulo
-        _nextReplaceIndex = (index == 0 ? _tagsLastIndex : index - 1);
-    }
-    VOID Flush()
-    {
-      for (INT32 index = _tagsLastIndex; index >= 0; index--)
-      {
-	_tags[index] = 0;
-      }
-      _nextReplaceIndex=_tagsLastIndex;
-    }
-};
-
-} // namespace CACHE_SET
-
-namespace CACHE_ALLOC
-{
-    typedef enum
-    {
-        STORE_ALLOCATE,
-        STORE_NO_ALLOCATE
-    } STORE_ALLOCATION;
+  return count;
 }
 
-/*!
- *  @brief Generic cache base class; no allocate specialization, no cache set specialization
- */
-class CACHE_BASE
+void fill_hamming_lut(void)
 {
-  public:
-    // types, constants
-    typedef enum
+  for (int i = 0; i<256; ++i)
+    for (int j = 0; j < 256; ++j)
+      hamming_lut[i][j] = hamming_dist(i, j);
+}
+
+typedef enum
     {
         ACCESS_TYPE_LOAD,
         ACCESS_TYPE_STORE,
         ACCESS_TYPE_NUM
     } ACCESS_TYPE;
 
-  protected:
-    static const UINT32 HIT_MISS_NUM = 2;
-    CACHE_STATS _access[ACCESS_TYPE_NUM][HIT_MISS_NUM];
-
-	
-	// input params
-    const std::string _name;
-    const UINT32 _cacheSize;
-    const UINT32 _lineSize;
-    const UINT32 _associativity;
-    UINT32 _numberOfFlushes;
-    UINT32 _numberOfResets;
-	// computed params
-    const UINT32 _lineShift;
-    const UINT32 _setIndexMask;
-
-	
-  private:
-    
-
-
-    CACHE_STATS SumAccess(bool hit) const
-    {
-        CACHE_STATS sum = 0;
-
-        for (UINT32 accessType = 0; accessType < ACCESS_TYPE_NUM; accessType++)
-        {
-            sum += _access[accessType][hit];
-        }
-
-        return sum;
-    }
-
-  protected:
-    UINT32 NumSets() const { return _setIndexMask + 1; }
-
+/*!
+ *  @brief Cache set direct mapped
+ */
+class DIRECT_MAPPED
+{
   public:
-    // constructors/destructors
-    CACHE_BASE(std::string name, UINT32 cacheSize, UINT32 lineSize, UINT32 associativity);
-
-    // accessors
-    UINT32 CacheSize() const { return _cacheSize; }
-    UINT32 LineSize() const { return _lineSize; }
-    UINT32 Associativity() const { return _associativity; }
-    //
-    CACHE_STATS Hits(ACCESS_TYPE accessType) const { return _access[accessType][true];}
-    CACHE_STATS Misses(ACCESS_TYPE accessType) const { return _access[accessType][false];}
-    CACHE_STATS Accesses(ACCESS_TYPE accessType) const { return Hits(accessType) + Misses(accessType);}
-    CACHE_STATS Hits() const { return SumAccess(true);}
-    CACHE_STATS Misses() const { return SumAccess(false);}
-    CACHE_STATS Accesses() const { return Hits() + Misses();}
-
-    CACHE_STATS Flushes() const { return _numberOfFlushes;}
-    CACHE_STATS Resets() const { return _numberOfResets;}
-
-    VOID SplitAddress(const ADDRINT addr, CACHE_TAG & tag, UINT32 & setIndex) const
-    {
-        tag = addr >> _lineShift;
-        setIndex = tag & _setIndexMask;
-    }
-
-    VOID SplitAddress(const ADDRINT addr, CACHE_TAG & tag, UINT32 & setIndex, UINT32 & lineIndex) const
-    {
-        const UINT32 lineMask = _lineSize - 1;
-        lineIndex = addr & lineMask;
-        SplitAddress(addr, tag, setIndex);
-    }
-
-    VOID IncFlushCounter()
-    {
-	_numberOfFlushes += 1;
-    }
-
-    VOID IncResetCounter()
-    {
-	_numberOfResets += 1;
-    }
-
-    std::ostream & StatsLong(std::ostream & out) const;
+    ADDRINT _tag;
+    bool _isstore;
+    ADDRINT _addr;
+    DIRECT_MAPPED() { 
+						_isstore = false; 
+						_addr = 0;
+						_tag = 0;
+					}
 };
 
-CACHE_BASE::CACHE_BASE(std::string name, UINT32 cacheSize, UINT32 lineSize, UINT32 associativity)
-  : _name(name),
-    _cacheSize(cacheSize),
-    _lineSize(lineSize),
-    _associativity(associativity),
-    _lineShift(FloorLog2(lineSize)),
-    _setIndexMask((cacheSize / (associativity * lineSize)) - 1)
+DIRECT_MAPPED * _sets;
+
+UINT32 _lineSize;
+// computed params
+UINT32 _lineShift;
+UINT32 _setIndexMask;
+
+void initCache(UINT32 cacheSize, UINT32 lineSize, UINT32 max_sets)
 {
-
-    ASSERTX(IsPower2(_lineSize));
-    ASSERTX(IsPower2(_setIndexMask + 1));
-
-    for (UINT32 accessType = 0; accessType < ACCESS_TYPE_NUM; accessType++)
-    {
-        _access[accessType][false] = 0;
-        _access[accessType][true] = 0;
-    }
+	_lineSize = lineSize;
+	_lineShift = FloorLog2(lineSize);
+	_setIndexMask = (cacheSize / lineSize) - 1;
+	ASSERTX(IsPower2(_lineSize));
+     ASSERTX(IsPower2(_setIndexMask + 1));
+     _sets = new DIRECT_MAPPED[max_sets];
 }
 
-/*!
- *  @brief Stats output method
- */
-std::ostream & CACHE_BASE::StatsLong(std::ostream & out) const
+void cleanupCache(void)
 {
-    const UINT32 headerWidth = 19;
-    const UINT32 numberWidth = 10;
-
-    out << _name << ":" << std::endl;
-
-    for (UINT32 i = 0; i < ACCESS_TYPE_NUM; i++)
-    {
-        const ACCESS_TYPE accessType = ACCESS_TYPE(i);
-
-        std::string type(accessType == ACCESS_TYPE_LOAD ? "Load" : "Store");
-
-        out << StringString(type + " Hits:      ", headerWidth)
-            << StringInt(Hits(accessType), numberWidth) << std::endl;
-        out << StringString(type + " Misses:    ", headerWidth)
-            << StringInt(Misses(accessType), numberWidth) << std::endl;
-        out << StringString(type + " Accesses:  ", headerWidth)
-            << StringInt(Accesses(accessType), numberWidth) << std::endl;
-        out << StringString(type + " Miss Rate: ", headerWidth)
-            << StringFlt(100.0 * Misses(accessType) / Accesses(accessType), 2, numberWidth-1) << "%" << std::endl;
-        out << std::endl;
-    }
-
-    out << StringString("Total Hits:      ", headerWidth, ' ')
-        << StringInt(Hits(), numberWidth) << std::endl;
-    out << StringString("Total Misses:    ", headerWidth, ' ')
-        << StringInt(Misses(), numberWidth) << std::endl;
-    out << StringString("Total Accesses:  ", headerWidth, ' ')
-        << StringInt(Accesses(), numberWidth) << std::endl;
-    out << StringString("Total Miss Rate: ", headerWidth, ' ')
-        << StringFlt(100.0 * Misses() / Accesses(), 2, numberWidth-1) << "%" << std::endl;
-
-    out << StringString("Flushes:         ", headerWidth, ' ')
-        << StringInt(Flushes(), numberWidth) << std::endl;
-    out << StringString("Stat Resets:     ", headerWidth, ' ')
-        << StringInt(Resets(), numberWidth) << std::endl;
-
-    out << std::endl;
-
-    return out;
+  delete _sets;
 }
-
-/// ostream operator for CACHE_BASE
-std::ostream & operator<< (std::ostream & out, const CACHE_BASE & cacheBase)
+   
+static inline void LdAccessSingleLine(ADDRINT addr)
 {
-    return cacheBase.StatsLong(out);
-}
-
-/*!
- *  @brief Templated cache class with specific cache set allocation policies
- *
- *  All that remains to be done here is allocate and deallocate the right
- *  type of cache sets.
- */
-template <class SET, UINT32 MAX_SETS, UINT32 STORE_ALLOCATION>
-class CACHE : public CACHE_BASE
-{
-  private:
-    SET _sets[MAX_SETS];
-
-  public:
-    // constructors/destructors
-    CACHE(std::string name, UINT32 cacheSize, UINT32 lineSize, UINT32 associativity)
-      : CACHE_BASE(name, cacheSize, lineSize, associativity)
-    {
-        ASSERTX(NumSets() <= MAX_SETS);
-
-        for (UINT32 i = 0; i < NumSets(); i++)
-        {
-            _sets[i].SetAssociativity(associativity);
-        }
-    }
-
-    // modifiers
-    /// Cache access from addr to addr+size-1
-    bool Access(ADDRINT addr, UINT32 size, ACCESS_TYPE accessType);
-    /// Cache access at addr that does not span cache lines
-    void LdAccessSingleLine(ADDRINT addr);
-    void StAccessSingleLine(ADDRINT addr);
-
-    void Flush();
-    void ResetStats();
-};
-
-/*!
- *  @return true if all accessed cache lines hit
- */
-
-template <class SET, UINT32 MAX_SETS, UINT32 STORE_ALLOCATION>
-bool CACHE<SET,MAX_SETS,STORE_ALLOCATION>::Access(ADDRINT addr, UINT32 size, ACCESS_TYPE accessType)
-{
-    const ADDRINT highAddr = addr + size;
-    bool allHit = true;
-
-    const ADDRINT lineSize = LineSize();
-    const ADDRINT notLineMask = ~(lineSize - 1);
-    do
-    {
-        CACHE_TAG tag;
-        UINT32 setIndex;
-
-        SplitAddress(addr, tag, setIndex);
-
-        SET & set = _sets[setIndex];
-
-        bool localHit = set.Find(tag);
-        allHit &= localHit;
-
-        // on miss, loads always allocate, stores optionally
-        if ( (! localHit) && (accessType == ACCESS_TYPE_LOAD || STORE_ALLOCATION == CACHE_ALLOC::STORE_ALLOCATE))
-        {
-            set.Replace(tag);
-        }
-
-        addr = (addr & notLineMask) + lineSize; // start of next cache line
-    }
-    while (addr < highAddr);
-
-    _access[accessType][allHit]++;
-
-    return allHit;
-}
-
-template <class SET, UINT32 MAX_SETS, UINT32 STORE_ALLOCATION>
-void CACHE<SET,MAX_SETS,STORE_ALLOCATION>::LdAccessSingleLine(ADDRINT addr)
-{
-  CACHE_TAG tag = addr >> _lineShift;
+  ADDRINT tag = addr >> _lineShift;
   UINT32 setIndex = tag & _setIndexMask;
 
-  SET &set = _sets[setIndex];
+  DIRECT_MAPPED &set = _sets[setIndex];
 
   bool hit = set._tag == tag;
 
   if (!hit){
-    if(set._isstore){ //if the set was occupied and was containing a store op, we evict the previous cacheline (i.e. memory write)
+	if(set._isstore){ //if the set was occupied and was containing a store op, we evict the previous cacheline (i.e. memory write)
       // get statistics from set._addr here
-      PIN_SafeCopy(lineBytes, (void*)set._addr, (UINT32)lineSize);
-      totalTransitions += countTransitions((UINT8*)lineBytes, (UINT32)lineSize, 8); // bus width assumed 8 bytes
+      PIN_SafeCopy(lineBytes, (void*)set._addr, (UINT32)_lineSize);
+      totalTransitions += countTransitions((UINT8*)lineBytes, (UINT32)_lineSize, 8); // bus width assumed 8 bytes
       L3EvictCount++;
+	  /*std::cout << "Load store evict @ index: " << setIndex << "\nValues written: ";
+	  for (int i = 0; i<_lineSize/4 - 1; ++i)
+		  std::cout << ((int*)lineBytes)[i] << ", ";
+	  std::cout << ((int*)lineBytes)[_lineSize/4 - 1] << "\n";*/
+
     }
     // update the cache to hold the new tag, new addr and set it to valid
-    PIN_SafeCopy(lineBytes, (void*)addr, (UINT32)lineSize);
-    totalTransitions += countTransitions((UINT8*)lineBytes, (UINT32)lineSize, 8); // bus width assumed 8 bytes
+    PIN_SafeCopy(lineBytes, (void*)addr, (UINT32)_lineSize);
+    totalTransitions += countTransitions((UINT8*)lineBytes, (UINT32)_lineSize, 8); // bus width assumed 8 bytes
     L3MissCount++;
+	/*std::cout << "Load LLC miss @ index: " << setIndex << "\nValues read: ";
+	for (int i = 0; i<_lineSize / 4 - 1; ++i)
+		std::cout << ((int*)lineBytes)[i] << ", ";
+	std::cout << ((int*)lineBytes)[_lineSize / 4 - 1] << "\n";*/
 
     set._addr = addr;
     set._tag = tag;		
     set._isstore = false; //this is not a store operation, so we will not care when it is evicted 
   }
-  _access[ACCESS_TYPE_LOAD][hit]++;
 }
 
-template <class SET, UINT32 MAX_SETS, UINT32 STORE_ALLOCATION>
-void CACHE<SET,MAX_SETS,STORE_ALLOCATION>::StAccessSingleLine(ADDRINT addr)
+static inline void StAccessSingleLine(ADDRINT addr)
 {
-  CACHE_TAG tag = addr >> _lineShift;;
+  ADDRINT tag = addr >> _lineShift;;
   UINT32 setIndex = tag & _setIndexMask;
 
-  SET &set = _sets[setIndex];
+  DIRECT_MAPPED &set = _sets[setIndex];
 
   bool hit = set._tag == tag;
 
   if (!hit){
     if(set._isstore){ //if the set was occupied and was containing a store op, we evict the previous cacheline (i.e. memory write)
       // get statistics from set._addr here
-      PIN_SafeCopy(lineBytes, (void*)set._addr, (UINT32)lineSize);
-      totalTransitions += countTransitions((UINT8*)lineBytes, (UINT32)lineSize, 8); // bus width assumed 8 bytes
+      PIN_SafeCopy(lineBytes, (void*)set._addr, (UINT32)_lineSize);
+      totalTransitions += countTransitions((UINT8*)lineBytes, (UINT32)_lineSize, 8); // bus width assumed 8 bytes
       L3EvictCount++;
+	  /*std::cout << "Store store evict @ index: " << setIndex << "\nValues written: ";
+	  for (int i = 0; i<_lineSize / 4 - 1; ++i)
+		  std::cout << ((int*)lineBytes)[i] << ", ";
+	  std::cout << ((int*)lineBytes)[_lineSize / 4 - 1] << "\n";*/
     }
     // update the cache to hold the new tag, new addr and set it to valid
-    PIN_SafeCopy(lineBytes, (void*)addr, (UINT32)lineSize);
-    totalTransitions += countTransitions((UINT8*)lineBytes, (UINT32)lineSize, 8); // bus width assumed 8 bytes
+    PIN_SafeCopy(lineBytes, (void*)addr, (UINT32)_lineSize);
+    totalTransitions += countTransitions((UINT8*)lineBytes, (UINT32)_lineSize, 8); // bus width assumed 8 bytes
     L3MissCount++;
+
+	/*std::cout << "LLC store miss @ index: " << setIndex << "\nValues read: ";
+	for (int i = 0; i<_lineSize / 4 - 1; ++i)
+		std::cout << ((int*)lineBytes)[i] << ", ";
+	std::cout << ((int*)lineBytes)[_lineSize / 4 - 1] << "\n";*/
 
     set._addr = addr;
     set._tag = tag;		
@@ -535,37 +268,6 @@ void CACHE<SET,MAX_SETS,STORE_ALLOCATION>::StAccessSingleLine(ADDRINT addr)
   else{
     set._isstore = true; //this handles store after load operations
   }
-
-  _access[ACCESS_TYPE_STORE][hit]++;
 }
 
-/*!
- *  @return true if accessed cache line hits
- */
-template <class SET, UINT32 MAX_SETS, UINT32 STORE_ALLOCATION>
-void CACHE<SET,MAX_SETS,STORE_ALLOCATION>::Flush()
-{
-    for (INT32 index = NumSets(); index >= 0; index--) {
-      SET & set = _sets[index];
-      set.Flush();
-    }
-    IncFlushCounter();
-}
-
-template <class SET, UINT32 MAX_SETS, UINT32 STORE_ALLOCATION>
-void CACHE<SET,MAX_SETS,STORE_ALLOCATION>::ResetStats()
-{
-    for (UINT32 accessType = 0; accessType < ACCESS_TYPE_NUM; accessType++)
-    {
-	_access[accessType][false] = 0;
-	_access[accessType][true] = 0;
-    }
-    IncResetCounter();
-}
-
-
-// define shortcuts
-#define CACHE_DIRECT_MAPPED(MAX_SETS, ALLOCATION) CACHE<CACHE_SET::DIRECT_MAPPED, MAX_SETS, ALLOCATION>
-#define CACHE_ROUND_ROBIN(MAX_SETS, MAX_ASSOCIATIVITY, ALLOCATION) CACHE<CACHE_SET::ROUND_ROBIN<MAX_ASSOCIATIVITY>, MAX_SETS, ALLOCATION>
-
-#endif // PIN_CACHE_H
+#endif // memtrans_cache2

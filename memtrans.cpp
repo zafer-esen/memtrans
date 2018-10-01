@@ -34,53 +34,43 @@ END_LEGAL */
  */
 
 #include <iostream>
+#include <fstream>
 #include <cstdint>
-
 #include "pin.H"
+#include "instlib.H"
 #include <time.h>
 
-#define INS_SIM //if defined, the tool will simulate the instruction accesses
+#define LOCKED    1
+#define UNLOCKED  !LOCKED
+static UINT32	_lockAnalysis = UNLOCKED; /* unlock -> without sym */
+
+#define INS_SIM
 
 typedef UINT32 CACHE_STATS; // type of cache hit/miss counters
 
 #include "memtrans_cache.H"
 
-namespace UL3
+//================================================================================
+// Knobs
+//================================================================================
+ofstream out;
+KNOB<string> knob_output(KNOB_MODE_WRITEONCE, "pintool",
+			 "o", "memtrans.out", "specify log file name");
+KNOB<UINT32> knob_size(KNOB_MODE_WRITEONCE, "pintool",
+		       "s", "4096", "Cache size (bytes)");
+KNOB<UINT32> knob_associativity(KNOB_MODE_WRITEONCE, "pintool", 
+				"a", "1", "Cache associativity");
+KNOB<UINT32> knob_line_size(KNOB_MODE_WRITEONCE, "pintool",
+			    "l", "64", "Cache line size");
+KNOB<UINT32> knob_sim_inst(KNOB_MODE_WRITEONCE, "pintool",
+			    "ic", "0", "Instruction cache simulation (default: off)");
+
+namespace LLC
 {
-  // 3rd level unified cache: 16 MB, 64 B lines, direct mapped
-  const UINT32 cacheSize = 16*MEGA;
-  // const UINT32 lineSize = 64;
-  const UINT32 associativity = 1; //do not change forget to change this to 1 if using direct mapped
-  const CACHE_ALLOC::STORE_ALLOCATION allocation = CACHE_ALLOC::STORE_ALLOCATE;
-
-  const UINT32 max_sets = cacheSize / (lineSize * associativity);
-
-  typedef CACHE_DIRECT_MAPPED(max_sets, allocation) CACHE;
-  //typedef CACHE_ROUND_ROBIN(max_sets, associativity, allocation) CACHE;
-}
-LOCALVAR UL3::CACHE ul3("L3 Unified Cache", UL3::cacheSize, lineSize, UL3::associativity);
-
-// finds the hamming distance between two bytes
-uint8_t hamming_dist(uint8_t b1, uint8_t b2)
-{
-  // xor to get the differing bits in a byte
-  uint8_t diff = b1 ^ b2;
-
-  // Brian Kernighan's algorithm to count the number of bits in a byte
-  uint8_t count = 0;
-  while (diff)
-    {
-      ++count;
-      diff &= diff - 1;
-    }
-  return count;
-}
-
-void fill_hamming_lut(void)
-{
-  for (int i = 0; i<256; ++i)
-    for (int j = 0; j < 256; ++j)
-      hamming_lut[i][j] = hamming_dist(i, j);
+  UINT32 cacheSize;
+  UINT32 lineSize;
+  ADDRINT notLineMask;
+  UINT32 max_sets;
 }
 
 clock_t start;
@@ -88,49 +78,82 @@ LOCALFUN VOID Fini(int code, VOID * v)
 {
   clock_t end = clock() ;
   double elapsed_time = (end-start)/(double)CLOCKS_PER_SEC ;
+  double bitEntropy = calcBitEntropy(LLC::lineSize, 8);
+  //std::cerr << llc;
+  std::cout << "LLC miss count: " << L3MissCount << std::endl;
+  std::cout << "LLC store evict count: " << L3EvictCount << std::endl;
+  std::cout << "Total number of bit transitions: " << totalTransitions << "\n";
+  std::cout << "Bit entropy: " << bitEntropy << "\n\n";
+  
+  std::cout << "Other metrics" << std::endl;
+  
+  // DO NOT MODIFY BELOW CODE OUTPUT STRUCTURE
+  std::cout << "Number of bytes with value:" << std::endl;
+  UINT64 totalBytes = 0;
+  for (int i = 0; i < 256; ++i) {
+	totalBytes += counts[i];
+	std::cout << i << ": " << counts[i] << std::endl;
+  }
+	
+  std::cout << "Number of times every byte is repeated:" << std::endl;
+  for (int i = 0; i < 256; ++i)
+  std::cout << i << ": " << same_bytes[i] << std::endl;
 
-  std::cerr << ul3;
-  std::cout << "L3 miss count: " << L3MissCount << std::endl;
-  std::cout << "L3 store evict count: " << L3EvictCount << std::endl;
-  std::cout << "Total number of bit transitions: " << totalTransitions << "\n\n";
+  for (int i = 0; i < 256; ++i)
+    for (int j = 0; j < 256; ++j)
+  std::cout << i << "," << j << ": " << transition_counts[i][j] << std::endl;
+  
+  // DO NOT MODIFY ABOVE CODE OUTPUTSTRUCTURE
+  
+  std::cout << "Total number of bytes transferred: " << totalBytes << std::endl << std::endl;
+  
   std::cout << "Elapsed time: " << elapsed_time << std::endl;
+  
   delete lineBytes;
+  cleanupCache();
 }
-
 
 LOCALFUN VOID CacheLoad(ADDRINT addr, UINT32 size)
 {
-  ADDRINT highAddr;
-  highAddr = addr + size;
+  if (_lockAnalysis)
+    return;
+
+  ADDRINT highAddr = addr + size;
   do{
-      ul3.LdAccessSingleLine(addr);
-      addr = (addr & notLineMask) + lineSize;
+      LdAccessSingleLine(addr & LLC::notLineMask);
+      addr = (addr & LLC::notLineMask) + LLC::lineSize;
     } while (addr < highAddr);
 }
 
 LOCALFUN VOID CacheStore(ADDRINT addr, UINT32 size)
 {
+  if (_lockAnalysis)
+	return;
   ADDRINT highAddr;
   highAddr = addr + size;
   do{
-    ul3.StAccessSingleLine(addr);
-    addr = (addr & notLineMask) + lineSize;
+    StAccessSingleLine(addr & LLC::notLineMask);
+    addr = (addr & LLC::notLineMask) + LLC::lineSize;
   } while (addr < highAddr);
 }
 
 LOCALFUN VOID CacheLoadSingle(ADDRINT addr)
 {
-  ul3.LdAccessSingleLine(addr);
+  if (_lockAnalysis)
+	return;
+  LdAccessSingleLine(addr & LLC::notLineMask);
 }
 
 LOCALFUN VOID CacheStoreSingle(ADDRINT addr)
 {
-  ul3.StAccessSingleLine(addr);
+  if (_lockAnalysis)
+	return;
+  StAccessSingleLine(addr & LLC::notLineMask);
 }
 
 LOCALFUN VOID Instruction(INS ins, VOID *v)
 {
-    // all instruction fetches access I-cache
+	// all instruction fetches access I-cache
 #ifdef INS_SIM  
   INS_InsertCall(
         ins, IPOINT_BEFORE, (AFUNPTR)CacheLoadSingle,
@@ -142,7 +165,7 @@ LOCALFUN VOID Instruction(INS ins, VOID *v)
     {
       // only predicated-on memory instructions access D-cache
       UINT32 size = INS_MemoryReadSize(ins);
-      if(size <= lineSize){
+      if(size <= LLC::lineSize){
 	INS_InsertPredicatedCall(
 			       ins, IPOINT_BEFORE, (AFUNPTR)CacheLoadSingle,
 			       IARG_MEMORYREAD_EA,
@@ -161,7 +184,7 @@ LOCALFUN VOID Instruction(INS ins, VOID *v)
       {
         // only predicated-on memory instructions access D-cache
 	UINT32 size = INS_MemoryWriteSize(ins);
-	if(size <= lineSize){
+	if(size <= LLC::lineSize){
 	  INS_InsertPredicatedCall(
 				 ins, IPOINT_BEFORE, (AFUNPTR)CacheStoreSingle,
 				 IARG_MEMORYWRITE_EA,
@@ -177,15 +200,49 @@ LOCALFUN VOID Instruction(INS ins, VOID *v)
       }
 }
 
+VOID unlockAnalysis(void)
+{
+	_lockAnalysis = UNLOCKED;
+}
+
+VOID lockAnalysis(void)
+{
+	_lockAnalysis = LOCKED;
+}
+
+VOID Image(IMG img, VOID *v)
+{
+	RTN mainRtn = RTN_FindByName(img, "main");
+
+	if (RTN_Valid(mainRtn)) {
+		RTN_Open(mainRtn);
+		RTN_InsertCall(mainRtn, IPOINT_BEFORE, (AFUNPTR)unlockAnalysis, IARG_END);
+		RTN_InsertCall(mainRtn, IPOINT_AFTER, (AFUNPTR)lockAnalysis, IARG_END);
+		RTN_Close(mainRtn);
+	}
+}
+
+void initCacheParams(void)
+{
+  start = clock();
+  LLC::associativity = knob_associativity.Value();
+  LLC::cacheSize = knob_size.Value();
+  LLC::lineSize = knob_line_size.Value();
+  LLC::notLineMask = ~(((ADDRINT)(lineSize)) - 1);
+  LLC::max_sets = cacheSize / (lineSize);
+  
+  lineBytes = new UINT8[LLC::lineSize];
+  
+  initCache(LLC::cacheSize, LLC::lineSize, LLC::max_sets); 
+  fill_hamming_lut();
+}
+
 GLOBALFUN int main(int argc, char *argv[])
 {
-  start = clock() ;
-
   PIN_Init(argc, argv);
+  PIN_InitSymbols();
 
-  lineBytes = new UINT8[ul3.LineSize()];
-  fill_hamming_lut();
-
+  IMG_AddInstrumentFunction(Image, 0);
   INS_AddInstrumentFunction(Instruction, 0);
   PIN_AddFiniFunction(Fini, 0);
 
