@@ -38,6 +38,30 @@
 #include <string>
 #include <list>
 
+#define PROFILE_PIN
+#ifdef PROFILE_PIN
+#include <sys/time.h>
+struct timeval timer_st, timer_ld, timer_stat, timer_copy; 
+extern ofstream out;
+#define DURATION_FILTER 10
+
+void start_timer(struct timeval* timer)
+{
+  gettimeofday(timer, NULL);
+}
+UINT32 stop_timer(struct timeval* timer)
+{
+  struct timeval ct, dt;
+  gettimeofday(&ct, NULL);
+  
+  dt.tv_sec = ct.tv_sec - timer->tv_sec;
+  dt.tv_usec = ct.tv_usec - timer->tv_usec;
+
+  return dt.tv_sec*UINT32(1e6) + dt.tv_usec;
+}
+
+#endif
+
 #include "pin_util.H"
 
 
@@ -78,18 +102,14 @@ UINT8 lineBytes[1024]; //holds the byte values during transfer from/to DRAM
 UINT64 countTransitionsCalled = 0;
 static inline UINT32 countTransitions(UINT8* startAddr, UINT32 len, UINT8 busWidth)
 {
+  start_timer(&timer_stat);
   UINT32 count = 0;
   UINT8* curWord = startAddr;
   UINT8 b0, b1;
   UINT32 num_words = len/busWidth-1;
-  //cout << "counting transitions...\n";
   for (UINT32 i=0; i<num_words; ++i){
     for (UINT32 j=0; j<busWidth; ++j){
-      //cout << "iteration i: " << i << " j: " << j << "\n";
-      //cout << "curword* : ";
-      //cout << curWord << "\n"; 
       count += hamming_lut[*(curWord+j)][*((curWord+j)+busWidth)];
-      //cout << "got count from lut\n";
       b0 = *(curWord + j);
       b1 = *((curWord + j) + busWidth);
       counts[b0]++;
@@ -103,6 +123,9 @@ static inline UINT32 countTransitions(UINT8* startAddr, UINT32 len, UINT8 busWid
     curWord += busWidth;
   }
   countTransitionsCalled++;
+  UINT32 duration = stop_timer(&timer_stat);
+  if (duration > DURATION_FILTER)
+    out << "stat time: " << duration << "\n";
   return count;
 }
 
@@ -188,18 +211,11 @@ static inline INT32 CeilLog2(UINT32 n)
  */
 class CACHE_LINE
 {
-private:
-  ADDRINT _tag;
-  bool _isStore;
-
 public:
-  CACHE_LINE(ADDRINT tag = 0, bool isStore = false) { _tag = tag; _isStore = isStore;}
-  bool operator==(const CACHE_LINE &right) const { return _tag == right._tag; }
-  bool isStore() const { return _isStore; }
-  void setStore(bool isStore) { _isStore = isStore; }
-  void setTag(ADDRINT tag) { _tag = tag; }
-  ADDRINT getTag(void) const { return _tag; }
-  void clear() { _tag = 0; _isStore = 0;}
+  ADDRINT tag;
+  bool isStore;
+  CACHE_LINE(ADDRINT tag_in = 0, bool isStore_in = false) { tag = tag_in; isStore = isStore_in;}
+  void clear() { tag = 0; isStore = 0;}
 };
 
 /*!
@@ -207,7 +223,6 @@ public:
  */
 namespace CACHE_SET
 {
-
   bool cacheHit = false;
 
   /*!
@@ -226,17 +241,16 @@ namespace CACHE_SET
       if (associativity != 1)
 	std::cerr << "cannot set associativity, must be 1 if direct mapped!\n";
       ASSERTX(associativity == 1); } //TODO: deal with these asserts
-    UINT32 GetAssociativity(UINT32 associativity) { return 1; }
 
-    CACHE_LINE* Find(ADDRINT tag) { 
-      cacheHit = (_cacheline.getTag() == tag) ? true : false;
+    inline CACHE_LINE* Find(ADDRINT tag) { 
+      cacheHit = (_cacheline.tag == tag) ? true : false;
       return &_cacheline;
     }
-    VOID Replace(ADDRINT tag, bool isStore) { 
-      _cacheline.setTag(tag); 
-      _cacheline.setStore(isStore); 
+    inline VOID Replace(ADDRINT tag, bool isStore) { 
+      _cacheline.tag = tag; 
+      _cacheline.isStore = isStore; 
     }
-    VOID Flush() { _cacheline.clear(); }
+    inline VOID Flush() { _cacheline.clear(); }
   };
 
   /*!
@@ -277,15 +291,14 @@ namespace CACHE_SET
       _nextReplaceIndex = _cachelinesLastIndex;
       _associativity = associativity;
     }
-    UINT32 GetAssociativity(UINT32 associativity) { return _associativity; }
 
-    CACHE_LINE* Find(ADDRINT tag)
+    inline CACHE_LINE* Find(ADDRINT tag)
     {
       cacheHit = false;
       INT32 index;
       for (index = _cachelinesLastIndex; index >= 0; index--)
         {
-	  if(_cachelines[index].getTag() == tag ){
+	  if(_cachelines[index].tag == tag ){
 	    cacheHit = true;
 	    break;
 	  }
@@ -293,13 +306,13 @@ namespace CACHE_SET
       return &(_cachelines[index]);
     }
 
-    VOID Replace(ADDRINT tag, bool isStore)
+    inline VOID Replace(ADDRINT tag, bool isStore)
     {
       // g++ -O3 too dumb to do CSE on following lines?!
       const UINT32 index = _nextReplaceIndex;
 
-      _cachelines[index].setTag(tag);
-      _cachelines[index].setStore(isStore);
+      _cachelines[index].tag = tag;
+      _cachelines[index].isStore = isStore;
       // condition typically faster than modulo
       _nextReplaceIndex = (index == 0 ? _cachelinesLastIndex : index - 1);
     }
@@ -329,16 +342,16 @@ public:
       ACCESS_TYPE_STORE,
       ACCESS_TYPE_NUM
     } ACCESS_TYPE;
+  const std::string _name;
+  const UINT32 _cacheSize;
+  const UINT32 _lineSize;
 
 protected:
   static const UINT32 HIT_MISS_NUM = 2;
   CACHE_STATS _access[ACCESS_TYPE_NUM][HIT_MISS_NUM];
 
-private:
   // input params
-  std::string _name;
-  UINT32 _cacheSize;
-  UINT32 _lineSize;
+
   ADDRINT _notLineMask;
   UINT32 _associativity;
   UINT32 _numberOfFlushes;
@@ -353,28 +366,15 @@ private:
     CACHE_STATS sum = 0;
 
     for (UINT32 accessType = 0; accessType < ACCESS_TYPE_NUM; accessType++)
-      {
 	sum += _access[accessType][hit];
-      }
 
     return sum;
   }
-
-protected:
-  UINT32 NumSets() const { return _setIndexMask + 1; }
 
 public:
   // constructors/destructors
   CACHE_BASE(std::string name, UINT32 cacheSize, UINT32 lineSize, UINT32 associativity);
 
-  // accessors
-  UINT32 CacheSize() const { return _cacheSize; }
-  UINT32 LineSize() const { return _lineSize; }
-  UINT32 Associativity() const { return _associativity; }
-  ADDRINT LineStart(ADDRINT addr) { return addr & _notLineMask; }
-  ADDRINT GetLineFromTag(ADDRINT tag) { return tag << _lineShift; }
-
-  //
   CACHE_STATS Hits(ACCESS_TYPE accessType) const { return _access[accessType][true];}
   CACHE_STATS Misses(ACCESS_TYPE accessType) const { return _access[accessType][false];}
   CACHE_STATS Accesses(ACCESS_TYPE accessType) const { return Hits(accessType) + Misses(accessType);}
@@ -384,19 +384,6 @@ public:
 
   CACHE_STATS Flushes() const { return _numberOfFlushes;}
   CACHE_STATS Resets() const { return _numberOfResets;}
-
-  VOID SplitAddress(const ADDRINT addr, ADDRINT & tag, UINT32 & setIndex) const
-  {
-    tag = addr >> _lineShift;
-    setIndex = tag & _setIndexMask;
-  }
-	
-  VOID SplitAddress(const ADDRINT addr, ADDRINT & tag, UINT32 & setIndex, UINT32 & lineIndex) const
-  {
-    const UINT32 lineMask = _lineSize - 1;
-    lineIndex = addr & lineMask;
-    SplitAddress(addr, tag, setIndex);
-  }
 
   VOID IncFlushCounter()
   {
@@ -541,10 +528,8 @@ public:
 
     _sets = new SET[_num_sets]; 
 
-    for (UINT32 i = 0; i < NumSets(); i++)
-      {
+    for (UINT32 i = 0; i < _setIndexMask+1; i++) //_setIndexMask+1 is NumSets
 	_sets[i].SetAssociativity(associativity);
-      }
   }
   ~CACHE()
   {
@@ -561,89 +546,101 @@ public:
 
 
 template <class SET>
-void CACHE<SET>::LdAccessSingleLine(ADDRINT addr)
+inline void CACHE<SET>::LdAccessSingleLine(ADDRINT addr)
 {
+  start_timer(&timer_ld);
   ADDRINT tag;
   UINT32 setIndex;
   CACHE_LINE* cacheline;
+  UINT32 duration;
 
-  addr = LineStart(addr);
-
-  SplitAddress(addr, tag, setIndex);
+  addr = addr & _notLineMask; //get the start of the cacheline
+  tag = addr >> _lineShift;
+  setIndex = tag & _setIndexMask;
 
   SET & set = _sets[setIndex];
 
-  cacheline  = set.Find(tag);
+  //cacheline  = set.Find(tag);
+  bool hit = (set._cacheline.tag == tag);
+  cacheline = &(set._cacheline);
 
   // on miss, loads always allocate, stores optionally
-  if (!CACHE_SET::cacheHit)
-    {
-      if(cacheline->isStore()){ //if the set was occupied and was containing a store op, we evict the previous cacheline (i.e. memory write)
+  if (!hit){
+    if(cacheline->isStore){ //if the set was occupied and was containing a store op, we evict the previous cacheline (i.e. memory write)
 	// get statistics from set._addr here
-	PIN_SafeCopy(lineBytes, (void*)GetLineFromTag(cacheline->getTag()), LineSize());
-	totalTransitions += countTransitions((UINT8*)lineBytes, LineSize(), 8); // bus width assumed 8 bytes
+        start_timer(&timer_copy);
+	PIN_SafeCopy(lineBytes, (void*)(set._cacheline.tag << _lineShift), _lineSize);
+	duration = stop_timer(&timer_copy);
+	if (duration > DURATION_FILTER)
+	  out << "LD copy time 1: " << duration << "\n";
+	totalTransitions += countTransitions((UINT8*)lineBytes, _lineSize, 8); // bus width assumed 8 bytes
 	LLCEvictCount++;
       }
-      PIN_SafeCopy(lineBytes, (void*)addr, LineSize());
-      totalTransitions += countTransitions((UINT8*)lineBytes, LineSize(), 8); // bus width assumed 8 bytes
+      start_timer(&timer_copy);
+      PIN_SafeCopy(lineBytes, (void*)addr, _lineSize);
+      duration = stop_timer(&timer_copy);
+      if (duration > DURATION_FILTER)
+	out << "LD copy time 2: " << duration << "\n";
+      totalTransitions += countTransitions((UINT8*)lineBytes, _lineSize, 8); // bus width assumed 8 bytes
       LLCMissCount++;
       set.Replace(tag, false); 
-    }
-  _access[ACCESS_TYPE_LOAD][CACHE_SET::cacheHit]++;
+  }
+  //_access[ACCESS_TYPE_LOAD][CACHE_SET::cacheHit]++;
+  duration = stop_timer(&timer_ld);
+  if (duration > DURATION_FILTER)
+    out << "LD time: " << duration << ", Hit: " << hit << "\n";
 }
 
-template <class SET>
-void CACHE<SET>::StAccessSingleLine(ADDRINT addr)
-{
+ template <class SET> void CACHE<SET>::StAccessSingleLine(ADDRINT addr)
+ {
   ADDRINT tag;
   UINT32 setIndex;
   CACHE_LINE* cacheline;
+  start_timer(&timer_st);
+  UINT32 duration;
 
-  //cout << "finding line start\n";
-  addr = LineStart(addr);
-  //cout << "splitting address\n";
-  SplitAddress(addr, tag, setIndex);
-  //cout << " addr: " << addr << " tag: " << tag << " setIndex: " << setIndex << std::endl;
-  
-  //cout << "referencing set\n";
+  addr = addr & _notLineMask;
+  tag = addr >> _lineShift;
+  setIndex = tag & _setIndexMask;  
   SET & set = _sets[setIndex];
 
-  //cout << "finding cacheline inside set\n";
-  cacheline  = set.Find(tag);
+  //cacheline  = set.Find(tag);
+  bool hit = (set._cacheline.tag == tag);
+  cacheline = &(set._cacheline);
 
-  // on miss, loads always allocate, stores optionally
-  //cout << "checking if hit\n";
-  if (!CACHE_SET::cacheHit)
-    {
-      //cout << "not hit, checking if store\n";
-      //cout << "cacheline addr: " << cacheline << "\n";
-      //cout << "is store?: " << cacheline->isStore() << "\n";
-      if(cacheline->isStore()){ //if the set was occupied and was containing a store op, we evict the previous cacheline (i.e. memory write)
-	// get statistics from set._addr here
-	//cout << "copying data from memory\n";
-	PIN_SafeCopy(lineBytes, (void*)GetLineFromTag(cacheline->getTag()), LineSize());
-	//cout << "calculating num transitions\n";
-	totalTransitions += countTransitions((UINT8*)lineBytes, LineSize() , 8); // bus width assumed 8 bytes
-	LLCEvictCount++;
-      }
-      //cout << "copying from address " << LineSize() << " bytes\n";
-      PIN_SafeCopy(lineBytes, (void*)addr, LineSize());
-      //cout << "counting transitions\n";
-      totalTransitions += countTransitions((UINT8*)lineBytes, LineSize(), 8); // bus width assumed 8 bytes
-      LLCMissCount++;
-      set.Replace(tag, true); 
+  if (!hit){
+    if (cacheline->isStore){ //if the set was occupied and was containing a store op, we evict the previous cacheline (i.e. memory write)
+      // get statistics from set._addr here
+      start_timer(&timer_copy);
+      PIN_SafeCopy(lineBytes, (void*)(set._cacheline.tag << _lineShift), _lineSize);
+      duration = stop_timer(&timer_copy);
+      if (duration > DURATION_FILTER)
+	out << "ST copy time 1: " << duration << "\n";
+      totalTransitions += countTransitions((UINT8*)lineBytes, _lineSize , 8); // bus width assumed 8 bytes
+      LLCEvictCount++;
     }
-  else{
-    //cout << "hit, setting store to true!\n";
-    cacheline -> setStore(true);  //this handles store after load operations
+    start_timer(&timer_copy);
+    PIN_SafeCopy(lineBytes, (void*)addr, _lineSize);
+    duration = stop_timer(&timer_copy);
+    if (duration > DURATION_FILTER)
+      out << "ST copy time 2: " << duration << "\n";
+    totalTransitions += countTransitions((UINT8*)lineBytes, _lineSize, 8); // bus width assumed 8 bytes
+    LLCMissCount++;
+    set.Replace(tag, true); 
   }
-  _access[ACCESS_TYPE_STORE][CACHE_SET::cacheHit]++;
+  else{
+    cacheline->isStore = true;  //this handles store after load operations
+  }
+  //_access[ACCESS_TYPE_STORE][CACHE_SET::cacheHit]++;
+  duration = stop_timer(&timer_st);
+  if (duration > DURATION_FILTER)
+    out << "ST time: " << duration << ", Hit: " << hit << "\n";
 }
 
 template <class SET>
 void CACHE<SET>::Flush()
 {
-  for (INT32 index = NumSets(); index >= 0; index--) {
+  for (INT32 index = _setIndexMask+1; index >= 0; index--) { //_setIndexMask+1 is NumSets
     SET & set = _sets[index];
     set.Flush();
   }

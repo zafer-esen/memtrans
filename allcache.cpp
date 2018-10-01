@@ -38,15 +38,15 @@
 //================================================================================
 #include <iostream>
 using std::cout;
+
 #include "pin.H"
 typedef UINT32 CACHE_STATS; // type of cache hit/miss counters
 #include "cache.H"
 
 //================================================================================
-// Knobs and Output Related
+// Knobs
 //================================================================================
 ofstream out;
-
 KNOB<string> knob_output(KNOB_MODE_WRITEONCE, "pintool",
 			 "o", "memtrans.out", "specify log file name");
 KNOB<UINT32> knob_size(KNOB_MODE_WRITEONCE, "pintool",
@@ -75,7 +75,7 @@ LOCALFUN VOID CacheLoad(ADDRINT addr, UINT32 size)
   do {
     //cout << "cache load!\n";
     llc->LdAccessSingleLine(addr);
-    addr += llc->LineSize();
+    addr += llc->_lineSize;
   } while (addr < highAddr);
 }
 
@@ -86,7 +86,7 @@ LOCALFUN VOID CacheStore(ADDRINT addr, UINT32 size)
   //cout << "cache store!\n";
   do {
     llc->StAccessSingleLine(addr);
-    addr += llc->LineSize();
+    addr += llc->_lineSize;
   } while (addr < highAddr);
 }
 
@@ -115,7 +115,7 @@ LOCALFUN VOID Instruction(INS ins, VOID *v)
     {
       // only predicated-on memory instructions access D-cache
       UINT32 size = INS_MemoryReadSize(ins);
-      if (size <= llc->LineSize()) {
+      if (size <= llc->_lineSize) {
 	INS_InsertPredicatedCall(
 				 ins, IPOINT_BEFORE, (AFUNPTR)CacheLoadSingle,
 				 IARG_MEMORYREAD_EA,
@@ -134,7 +134,7 @@ LOCALFUN VOID Instruction(INS ins, VOID *v)
     {
       // only predicated-on memory instructions access D-cache
       UINT32 size = INS_MemoryWriteSize(ins);
-      if (size <= llc->LineSize()) {
+      if (size <= llc->_lineSize) {
 	INS_InsertPredicatedCall(
 				 ins, IPOINT_BEFORE, (AFUNPTR)CacheStoreSingle,
 				 IARG_MEMORYWRITE_EA,
@@ -153,14 +153,10 @@ LOCALFUN VOID Instruction(INS ins, VOID *v)
 void initCache(void)
 {
   out.open(knob_output.Value().c_str());
-  //cout << "creating new cache\n";
   llc = new CACHE_DIRECT_MAPPED("Last Level Cache", knob_size.Value(), knob_line_size.Value(), knob_associativity.Value());
   out << "Cache size: " << knob_size.Value() << "\nAssociativity: "<< knob_associativity.Value() << "\nCache line size: " << knob_line_size.Value() << "\n";
-  //cout << "cache intialized, starting timer\n";
   pin_timing::start = clock();
-  //cout << "filling LUT\n";
   fill_hamming_lut();
-  //cout << "init complete\n";
 }
 
 GLOBALFUN int main(int argc, char *argv[])
