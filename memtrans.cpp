@@ -40,11 +40,7 @@ END_LEGAL */
 #include "instlib.H"
 #include <time.h>
 
-#define LOCKED    1
-#define UNLOCKED  !LOCKED
-static UINT32	_lockAnalysis = UNLOCKED; /* unlock -> without sym */
-
-#define INS_SIM
+//#define INS_SIM
 
 typedef UINT32 CACHE_STATS; // type of cache hit/miss counters
 
@@ -57,7 +53,7 @@ ofstream out;
 KNOB<string> knob_output(KNOB_MODE_WRITEONCE, "pintool",
 			 "o", "memtrans.out", "specify log file name");
 KNOB<UINT32> knob_size(KNOB_MODE_WRITEONCE, "pintool",
-		       "s", "4096", "Cache size (bytes)");
+		       "s", "16777216", "Cache size (bytes)");
 KNOB<UINT32> knob_associativity(KNOB_MODE_WRITEONCE, "pintool", 
 				"a", "1", "Cache associativity");
 KNOB<UINT32> knob_line_size(KNOB_MODE_WRITEONCE, "pintool",
@@ -71,6 +67,7 @@ namespace LLC
   UINT32 lineSize;
   ADDRINT notLineMask;
   UINT32 max_sets;
+  UINT32 associativity;
 }
 
 clock_t start;
@@ -79,45 +76,42 @@ LOCALFUN VOID Fini(int code, VOID * v)
   clock_t end = clock() ;
   double elapsed_time = (end-start)/(double)CLOCKS_PER_SEC ;
   double bitEntropy = calcBitEntropy(LLC::lineSize, 8);
-  //std::cerr << llc;
-  std::cout << "LLC miss count: " << L3MissCount << std::endl;
-  std::cout << "LLC store evict count: " << L3EvictCount << std::endl;
-  std::cout << "Total number of bit transitions: " << totalTransitions << "\n";
-  std::cout << "Bit entropy: " << bitEntropy << "\n\n";
+  out << "Elapsed time: " << elapsed_time << "\n";
+  out << "LLC miss count: " << L3MissCount << "\n";
+  out << "LLC store evict count: " << L3EvictCount << "\n";
+  out << "Total number of bit transitions: " << totalTransitions << "\n";
+  out << "Bit entropy: " << bitEntropy << "\n\n";
   
-  std::cout << "Other metrics" << std::endl;
+  out << "Other metrics" << "\n";
   
   // DO NOT MODIFY BELOW CODE OUTPUT STRUCTURE
-  std::cout << "Number of bytes with value:" << std::endl;
+  out << "Number of bytes with value:" << "\n";
   UINT64 totalBytes = 0;
   for (int i = 0; i < 256; ++i) {
 	totalBytes += counts[i];
-	std::cout << i << ": " << counts[i] << std::endl;
+	out << i << ": " << counts[i] << "\n";
   }
 	
-  std::cout << "Number of times every byte is repeated:" << std::endl;
+  out << "Number of times every byte is repeated:" << std::endl;
   for (int i = 0; i < 256; ++i)
-  std::cout << i << ": " << same_bytes[i] << std::endl;
+  out << i << ": " << same_bytes[i] << std::endl;
 
   for (int i = 0; i < 256; ++i)
     for (int j = 0; j < 256; ++j)
-  std::cout << i << "," << j << ": " << transition_counts[i][j] << std::endl;
+  out << i << "," << j << ": " << transition_counts[i][j] << "\n";
   
   // DO NOT MODIFY ABOVE CODE OUTPUTSTRUCTURE
   
-  std::cout << "Total number of bytes transferred: " << totalBytes << std::endl << std::endl;
+  out << "Total number of bytes transferred: " << totalBytes << "\n\n";
+  out << "Elapsed time: " << elapsed_time << "\n";
   
-  std::cout << "Elapsed time: " << elapsed_time << std::endl;
-  
-  delete lineBytes;
+  out.close();
+  delete[] lineBytes;
   cleanupCache();
 }
 
 LOCALFUN VOID CacheLoad(ADDRINT addr, UINT32 size)
 {
-  if (_lockAnalysis)
-    return;
-
   ADDRINT highAddr = addr + size;
   do{
       LdAccessSingleLine(addr & LLC::notLineMask);
@@ -127,8 +121,6 @@ LOCALFUN VOID CacheLoad(ADDRINT addr, UINT32 size)
 
 LOCALFUN VOID CacheStore(ADDRINT addr, UINT32 size)
 {
-  if (_lockAnalysis)
-	return;
   ADDRINT highAddr;
   highAddr = addr + size;
   do{
@@ -139,27 +131,24 @@ LOCALFUN VOID CacheStore(ADDRINT addr, UINT32 size)
 
 LOCALFUN VOID CacheLoadSingle(ADDRINT addr)
 {
-  if (_lockAnalysis)
-	return;
   LdAccessSingleLine(addr & LLC::notLineMask);
 }
 
 LOCALFUN VOID CacheStoreSingle(ADDRINT addr)
 {
-  if (_lockAnalysis)
-	return;
   StAccessSingleLine(addr & LLC::notLineMask);
 }
 
 LOCALFUN VOID Instruction(INS ins, VOID *v)
 {
 	// all instruction fetches access I-cache
-#ifdef INS_SIM  
-  INS_InsertCall(
-        ins, IPOINT_BEFORE, (AFUNPTR)CacheLoadSingle,
-        IARG_INST_PTR,
-        IARG_END);
-#endif
+  //#ifdef INS_SIM  
+  if(knob_sim_inst == 1)
+    INS_InsertCall(
+		   ins, IPOINT_BEFORE, (AFUNPTR)CacheLoadSingle,
+		   IARG_INST_PTR,
+		   IARG_END);
+  //#endif
     
     if (INS_IsMemoryRead(ins) && INS_IsStandardMemop(ins))
     {
@@ -200,39 +189,19 @@ LOCALFUN VOID Instruction(INS ins, VOID *v)
       }
 }
 
-VOID unlockAnalysis(void)
-{
-	_lockAnalysis = UNLOCKED;
-}
-
-VOID lockAnalysis(void)
-{
-	_lockAnalysis = LOCKED;
-}
-
-VOID Image(IMG img, VOID *v)
-{
-	RTN mainRtn = RTN_FindByName(img, "main");
-
-	if (RTN_Valid(mainRtn)) {
-		RTN_Open(mainRtn);
-		RTN_InsertCall(mainRtn, IPOINT_BEFORE, (AFUNPTR)unlockAnalysis, IARG_END);
-		RTN_InsertCall(mainRtn, IPOINT_AFTER, (AFUNPTR)lockAnalysis, IARG_END);
-		RTN_Close(mainRtn);
-	}
-}
-
 void initCacheParams(void)
 {
   start = clock();
   LLC::associativity = knob_associativity.Value();
   LLC::cacheSize = knob_size.Value();
   LLC::lineSize = knob_line_size.Value();
-  LLC::notLineMask = ~(((ADDRINT)(lineSize)) - 1);
-  LLC::max_sets = cacheSize / (lineSize);
+  LLC::notLineMask = ~(((ADDRINT)(LLC::lineSize)) - 1);
+  LLC::max_sets = LLC::cacheSize / (LLC::lineSize);
   
   lineBytes = new UINT8[LLC::lineSize];
   
+  out.open(knob_output.Value().c_str());
+
   initCache(LLC::cacheSize, LLC::lineSize, LLC::max_sets); 
   fill_hamming_lut();
 }
@@ -242,7 +211,8 @@ GLOBALFUN int main(int argc, char *argv[])
   PIN_Init(argc, argv);
   PIN_InitSymbols();
 
-  IMG_AddInstrumentFunction(Image, 0);
+  initCacheParams();
+
   INS_AddInstrumentFunction(Instruction, 0);
   PIN_AddFiniFunction(Fini, 0);
 
