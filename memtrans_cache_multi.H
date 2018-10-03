@@ -38,14 +38,17 @@
 #include <list>
 #include <iterator>
 
-UINT32 L3MissCount = 0;
-UINT32 L3EvictCount = 0;
+enum ACCESS_TYPE {LOAD_ACCESS=0, STORE_ACCESS};
+UINT64 LLCMissCount[2] = {0, 0};
+UINT64 LLCHitCount[2] = {0, 0};
+UINT64 LLCEvictCount = 0;
 UINT8 * lineBytes;
 UINT8 hamming_lut[256][256];
 UINT64 totalTransitions = 0;
 UINT64 counts[256] = { 0 }; //number of times every byte value appears in transfers
 UINT64 same_bytes[256] = { 0 }; //number of times a byte value repeats in transfers (bus-wise)
 UINT64 transition_counts[256][256]; //counts the transitioning byte values (transfer-wise)
+
 /*
   -----> transfer-wise		
   t0	t1	t2	...	^ bus-wise
@@ -153,13 +156,6 @@ void fill_hamming_lut(void)
       hamming_lut[i][j] = hamming_dist(i, j);
 }
 
-typedef enum
-  {
-    ACCESS_TYPE_LOAD,
-    ACCESS_TYPE_STORE,
-    ACCESS_TYPE_NUM
-  } ACCESS_TYPE;
-
 /*!
  *  @brief Cache set direct mapped
  */
@@ -168,7 +164,7 @@ typedef struct CACHE_BLOCK
 {
   ADDRINT tag;
   ADDRINT addr;
-  bool isStore;
+  bool dirty;
 }CACHE_BLOCK;
 
 UINT32 _associativity = 1; //do not create LRU sets before changing this, if more than 1 associativity required
@@ -182,7 +178,7 @@ public:
     for (UINT32 i = 0; i < _associativity; ++i){
       cb[i].tag = 0;
       cb[i].addr = 0;
-      cb[i].isStore = false;
+      cb[i].dirty = false;
       cb_list.push_back(&cb[i]);
     }
   }
@@ -198,20 +194,24 @@ public:
         - If the evicted cacheline was dirty, we return its address in ADDRINT* evicted,
             otherwise we just throw it away over our shoulder and set ADDRINT* evicted to NULL.
         - We set the value of CACHE_BLOCK* block to point to the newly added cache block.
-    - isStore parameter sent in should reflect if this func is called from a load or store instruction
+    - accessType parameter sent in should reflect if this func is called from a load or store instruction
   */
-  bool FindReplace(ADDRINT tag, ADDRINT addr, bool isStore, ADDRINT* evicted){
-    bool cacheHit = false;
+  bool FindReplace(ADDRINT tag, ADDRINT addr, ACCESS_TYPE accessType, ADDRINT* evicted){
+    bool cacheHit;
     list<CACHE_BLOCK*>::iterator it, it_next;
-    //    std::cout << "list size: " << cb_list.size() << "\n";
-    for (it = cb_list.begin(); it != cb_list.end(); ++it){
+    //  std::cout << "list size: " << cb_list.size() << "\n";
+    
+    it = cb_list.begin();
+    for (UINT32 i = 0; i < _associativity;  ++i){
       //std::cout << "checking tag\n";
-      if((*it)->tag == tag){ //if it is a hit!
-	//	std::cout << "it's a hit\n";
-	cacheHit = true; //return value set to true
-	(*it)->isStore = isStore; //this update ensures that if the new call was a store, we set the block to dirty
+      cacheHit = (*it)->tag == tag;
+      if(cacheHit){ //if it is a hit!
+	//		std::cout << "it's a hit\n";
+	(*it)->dirty |= (accessType == STORE_ACCESS); //we set the dirty bit if this is a store
+	  //if ((*it)->dirty && (accessType == STORE_ACCESS))
+	  //(*it)->dirty = true; //we set the dirty bit if this is a store
 	//	std::cout << "checking if in begin\n";
-	if(it != cb_list.begin()){ //if the hit is not at the beginning of the list
+	if(i != 0){ //if the hit is not at the beginning of the list
 	  //	  std::cout << "not at begin!\n";
 	  it_next = it; //the following two lines can be removed if C++11+ is used
 	  std::advance(it_next,1);
@@ -220,21 +220,23 @@ public:
 	}
 	break;
       }
+      ++it;
     }
     if(!cacheHit){ //if we are at this point, that means we are gonna do a cache block replacement!
       //std::cout << "not hit!\n";
       //it should already be pointing to the end of the list, so we go one back
       std::advance(it, -1); //this should now point to the back of the list (LRU)
-      *evicted = (*it)->isStore ? (*it)->addr : (UINT32)0;  //if what we are going to throw away is a dirty cache block
+      *evicted = (*it)->dirty ? (*it)->addr : (UINT32)0;  //if what we are going to throw away is a dirty cache block
       // at this point we can safely overwrite the evicted cache block
       //std::cout << "evicted, now replacing!\n";
       (*it)->tag = tag;
       (*it)->addr = addr; // TODO: evaluate if we really need this...
-      (*it)->isStore = isStore; //this update ensures that if the new call was a store, we set the block to dirty
-      // finally move the cache block to the front
+      (*it)->dirty = (accessType == STORE_ACCESS); //this update ensures that if the new call was a store, we set the block to dirty
+      // finally move the cache block to the front, if associativity is more than 1
       //std::cout << "moving to beginning!\n";
-      cb_list.splice( cb_list.begin(), cb_list, 
-		      it, cb_list.end());  //this moves it to the beginning of the list (MRU) 
+      if (_associativity > 1)
+	cb_list.splice( cb_list.begin(), cb_list, 
+			it, cb_list.end());  //this moves it to the beginning of the list (MRU) 
       //std::cout << "moved to beginning after miss!\n";
       // at this point, we have successfully replaced a cache block and moved it to be the MRU in the list
     }
@@ -266,21 +268,21 @@ void cleanupCache(void)
 {
   delete[] _sets;
 }
-   
-static inline void LdAccessSingleLine(ADDRINT addr)
+  
+static inline void AccessSingleLine(ADDRINT addr, ACCESS_TYPE accessType)
 {
   ADDRINT tag = addr >> _lineShift;
   UINT32 setIndex = tag & _setIndexMask;
   LRU &set = _sets[setIndex];
 
   ADDRINT evicted_block_addr = 0;
-  bool hit = set.FindReplace(tag, addr, false, &evicted_block_addr);
+  bool hit = set.FindReplace(tag, addr, accessType, &evicted_block_addr);
   if (!hit){
     if(evicted_block_addr){ //if the evicted block was dirty (i.e. writeback to memory)
       // get statistics from the evicted cache block
       PIN_SafeCopy(lineBytes, (void*)evicted_block_addr, (UINT32)_lineSize);
       totalTransitions += countTransitions((UINT8*)lineBytes, (UINT32)_lineSize, 8); // bus width assumed 8 bytes
-      L3EvictCount++;
+      LLCEvictCount++;
       /*std::cout << "Load store evict @ index: " << setIndex << "\nValues written: ";
 	for (int i = 0; i<_lineSize/4 - 1; ++i)
 	std::cout << ((int*)lineBytes)[i] << ", ";
@@ -290,43 +292,14 @@ static inline void LdAccessSingleLine(ADDRINT addr)
     // update the cache to hold the new tag, new addr and set it to valid
     PIN_SafeCopy(lineBytes, (void*)addr, (UINT32)_lineSize);
     totalTransitions += countTransitions((UINT8*)lineBytes, (UINT32)_lineSize, 8); // bus width assumed 8 bytes
-    L3MissCount++;
+    LLCMissCount[accessType]++;
     /*std::cout << "Load LLC miss @ index: " << setIndex << "\nValues read: ";
       for (int i = 0; i<_lineSize / 4 - 1; ++i)
       std::cout << ((int*)lineBytes)[i] << ", ";
       std::cout << ((int*)lineBytes)[_lineSize / 4 - 1] << "\n";*/
   }
+  else
+    LLCHitCount[accessType]++;  
 }
 
-static inline void StAccessSingleLine(ADDRINT addr)
-{
-  ADDRINT tag = addr >> _lineShift;;
-  UINT32 setIndex = tag & _setIndexMask;
-
-  LRU &set = _sets[setIndex];
-
-  ADDRINT evicted_block_addr = 0;
-  bool hit = set.FindReplace(tag, addr, true, &evicted_block_addr);
-  if (!hit){
-    if(evicted_block_addr){ //if the evicted block was dirty (i.e. writeback to memory)
-      // get statistics from the evicted cache block
-      PIN_SafeCopy(lineBytes, (void*)evicted_block_addr, (UINT32)_lineSize);
-      totalTransitions += countTransitions((UINT8*)lineBytes, (UINT32)_lineSize, 8); // bus width assumed 8 bytes
-      L3EvictCount++;
-      /*std::cout << "Store store evict @ index: " << setIndex << "\nValues written: ";
-	for (int i = 0; i<_lineSize/4 - 1; ++i)
-	std::cout << ((int*)lineBytes)[i] << ", ";
-	std::cout << ((int*)lineBytes)[_lineSize/4 - 1] << "\n";*/
-    }
-    // update the cache to hold the new tag, new addr and set it to valid
-    PIN_SafeCopy(lineBytes, (void*)addr, (UINT32)_lineSize);
-    totalTransitions += countTransitions((UINT8*)lineBytes, (UINT32)_lineSize, 8); // bus width assumed 8 bytes
-    L3MissCount++;
-    /*std::cout << "Store LLC miss @ index: " << setIndex << "\nValues read: ";
-      for (int i = 0; i<_lineSize / 4 - 1; ++i)
-      std::cout << ((int*)lineBytes)[i] << ", ";
-      std::cout << ((int*)lineBytes)[_lineSize / 4 - 1] << "\n";*/
-  }
-}
-
-#endif // memtrans_cache2
+#endif

@@ -1,4 +1,4 @@
 #!/bin/bash
 # Runs the memory transitions app
 
-../../../pin -t obj-intel64/memtrans3.so -s 16777216 -- ls
+../../../pin -t obj-intel64/memtrans3.so -s $1 -- ls
