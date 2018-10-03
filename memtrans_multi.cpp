@@ -76,6 +76,12 @@ LOCALFUN VOID Fini(int code, VOID * v)
   clock_t end = clock() ;
   double elapsed_time = (end-start)/(double)CLOCKS_PER_SEC ;
   double bitEntropy = calcBitEntropy(LLC::lineSize, 8);
+
+  out << "Cache parameters:\n";
+  out << "Cache size: " << LLC::cacheSize * LLC::associativity << " B\n";
+  out << "Associativity: " << LLC::associativity << " ways\n";
+  out << "Line size: " << LLC::lineSize << " B\n";
+
   out << "Elapsed time: " << elapsed_time << "\n";
   out << "LLC miss count: " << L3MissCount << "\n";
   out << "LLC store evict count: " << L3EvictCount << "\n";
@@ -219,6 +225,11 @@ GLOBALFUN int main(int argc, char *argv[])
 
   if (!initCacheParams())
     return 1; //exit if could not init cache
+
+  std::cout << "Starting simulation with:\n";
+  std::cout << "Cache size: " << LLC::cacheSize*LLC::associativity << " B\n";
+  std::cout << "Associativity: " << LLC::associativity << " ways\n";
+  std::cout << "Line size: " << LLC::lineSize << " B\n";
 
   INS_AddInstrumentFunction(Instruction, 0);
   PIN_AddFiniFunction(Fini, 0);
