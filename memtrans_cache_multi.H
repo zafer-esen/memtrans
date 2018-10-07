@@ -48,6 +48,8 @@ UINT64 totalTransitions = 0;
 UINT64 counts[256] = { 0 }; //number of times every byte value appears in transfers
 UINT64 transition_counts_tw[256][256] = { 0 }; //counts the transitioning byte values (transfer-wise)
 UINT64 transition_counts_bw[256][256] = { 0 }; //counts the transitioning byte values (bus-wise)
+UINT64 consecutive_zero_counts_bw[7] = { 0 };
+UINT64 consecutive_zero_counts_tw[7] = { 0 };
 
 /*
   -----> transfer-wise		
@@ -67,25 +69,43 @@ static inline UINT32 countTransitions(UINT8* startAddr, UINT32 len, UINT8 busWid
   bool end_zero_count_tw;
 
   UINT8* curWord;
-  UINT8 b0, b1, bPrev;
+  UINT8 b0, b1;
   UINT32 num_words = len/busWidth;
   curWord = startAddr;
   for (UINT32 i=0; i<num_words; ++i){
     for (UINT32 j=0; j<busWidth; ++j){
-      count += hamming_lut[*(curWord+j)][*((curWord+j)+busWidth)];
-      b0 = *(curWord + j);
-      b1 = *((curWord + j) + busWidth);
-      counts[b0]++;
-      transition_counts_tw[b0][b1]++;
-      if(j > 0)
-	transition_counts_bw[*(curWord+j-1)][b0]++;
       
-      if ( i != (num_words-1)){
-	
-      }
-      else{
-      }
-
+      b0 = *(curWord + j);
+       
+      transition_counts_tw[b0][b1]++;
+      
+	  zero_count_bw += (b0 == 0);
+	  if ((b0 != 0) || (j == busWidth - 1)) {
+				if (zero_count_bw > 1)
+					consecutive_zero_counts_bw[zero_count_bw - 2]++;
+				zero_count_bw = 0;
+			}
+	  
+	  if(j > 0)
+	    transition_counts_bw[*(curWord+j-1)][b0]++;
+      
+	  counts[b0]++;
+      if (i != (num_words - 1)) {
+				b1 = *((curWord + j) + busWidth);
+				end_zero_count_tw = b0 | b1;
+				zero_count_tw[j] += !end_zero_count_tw;
+				if (end_zero_count_tw ) {
+					if (zero_count_tw[j] > 0)
+						consecutive_zero_counts_tw[zero_count_tw[j] - 1]++;
+					zero_count_tw[j] = 0;
+				}
+				count += hamming_lut[b0][b1];
+				transition_counts[b0][b1]++;
+			}
+			else {
+			if (zero_count_tw[j] > 0)
+					consecutive_zero_counts_tw[zero_count_tw[j] - 1]++;
+		}
       
     }
     curWord += busWidth;

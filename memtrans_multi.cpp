@@ -113,7 +113,15 @@ LOCALFUN VOID Fini(int code, VOID * v)
     totalBytes += counts[i];
     out << i << ": " << counts[i] << "\n";
   }
-	
+
+  out << "Sequential 0 counts, bus-wise:\n";
+  for (int i = 0; i < 7; ++i)
+	out << i + 2 << consecutive_zero_counts_bw[i] << "\n";
+  
+  out << "Sequential 0 counts, transfer-wise:\n";
+  for (int i = 0; i < 7; ++i)
+    out << i + 2 << consecutive_zero_counts_tw[i] << "\n";
+  
   out << "Transition counts, bus-wise:\n";
   for (int i = 0; i < 256; ++i)
     for (int j = 0; j < 256; ++j)
@@ -123,7 +131,7 @@ LOCALFUN VOID Fini(int code, VOID * v)
   for (int i = 0; i < 256; ++i)
     for (int j = 0; j < 256; ++j)
       out << i << "," << j << ": " << transition_counts_tw[i][j] << "\n";
-  
+
   // DO NOT MODIFY ABOVE CODE OUTPUTSTRUCTURE
   
   out << "Total number of bytes transferred: " << totalBytes << "\n\n";
