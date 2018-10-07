@@ -65,9 +65,10 @@ static inline UINT32 countTransitions(UINT8* startAddr, UINT32 len, UINT8 busWid
   UINT32 count = 0;
   UINT8 zero_count_bw = 0;
   bool end_zero_count_tw;
+
   UINT8* curWord;
   UINT8 b0, b1, bPrev;
-  UINT32 num_words = len/busWidth-1;
+  UINT32 num_words = len/busWidth;
   curWord = startAddr;
   for (UINT32 i=0; i<num_words; ++i){
     for (UINT32 j=0; j<busWidth; ++j){
@@ -78,10 +79,14 @@ static inline UINT32 countTransitions(UINT8* startAddr, UINT32 len, UINT8 busWid
       transition_counts_tw[b0][b1]++;
       if(j > 0)
 	transition_counts_bw[*(curWord+j-1)][b0]++;
-      if (i == num_words - 1){
+      
+      if ( i != (num_words-1)){
 	
-	counts[b1]++;
       }
+      else{
+      }
+
+      
     }
     curWord += busWidth;
   }
