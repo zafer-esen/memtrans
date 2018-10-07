@@ -53,7 +53,7 @@ KNOB<string> knob_output(KNOB_MODE_WRITEONCE,    "pintool",
                          "o", "memtrans3.out", "specify log file name");
 
 KNOB<UINT32> knob_size(KNOB_MODE_WRITEONCE, "pintool",
-                       "s", "65536", "Cache size (bytes)");
+                       "s", "16777216", "Cache size (bytes)");
 KNOB<UINT32> knob_associativity(KNOB_MODE_WRITEONCE, "pintool", "a", "1", "Cache associativity");
 KNOB<UINT32> knob_line_size(KNOB_MODE_WRITEONCE, "pintool",
                             "l", "64", "Cache line size");

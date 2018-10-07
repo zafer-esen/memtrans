@@ -46,6 +46,8 @@ typedef UINT32 CACHE_STATS; // type of cache hit/miss counters
 
 #include "memtrans_cache_multi.H"
 
+#define SAMPLING_RATIO 2
+
 //================================================================================
 // Knobs
 //================================================================================
@@ -85,44 +87,42 @@ LOCALFUN VOID Fini(int code, VOID * v)
   out << "DRAM bus width: 8 B\n"; 
   out << "Instructions cache simulation: " << (knob_sim_inst.Value() == 0 ? "off\n\n" : "on\n\n");
 
-  out << "LLC Load Miss Count: " << LLCMissCount[LOAD_ACCESS] << "\n";
-  out << "LLC Load Hit Count: " << LLCHitCount[LOAD_ACCESS] << "\n";
+  out << "LLC Load Miss Count: " << LLCMissCount[LOAD_ACCESS]*SAMPLING_RATIO << "\n";
+  out << "LLC Load Hit Count: " << LLCHitCount[LOAD_ACCESS]*SAMPLING_RATIO << "\n";
   double loadAccesses =  (double)LLCHitCount[LOAD_ACCESS] + (double)LLCMissCount[LOAD_ACCESS];
   out << "LLC Load Miss Ratio: " << ((double)LLCMissCount[LOAD_ACCESS] / loadAccesses)*100 << "%\n\n";
-  out << "LLC Store Miss Count: " << LLCMissCount[STORE_ACCESS] << "\n";
-  out << "LLC Store Hit Count: " << LLCHitCount[STORE_ACCESS] << "\n";
+  out << "LLC Store Miss Count: " << LLCMissCount[STORE_ACCESS]*SAMPLING_RATIO << "\n";
+  out << "LLC Store Hit Count: " << LLCHitCount[STORE_ACCESS]*SAMPLING_RATIO << "\n";
   double storeAccesses =  (double)LLCHitCount[STORE_ACCESS] + (double)LLCMissCount[STORE_ACCESS];
-  out << "LLC Store Evict Count: " << LLCEvictCount << "\n";
+  out << "LLC Store Evict Count: " << LLCEvictCount*SAMPLING_RATIO << "\n";
   out << "LLC Store Miss Ratio: " << ((double)LLCMissCount[STORE_ACCESS]) / storeAccesses*100 << "%\n\n";
-  double totalMissCount = (double)(LLCMissCount[STORE_ACCESS] + LLCMissCount[LOAD_ACCESS]);
-  double totalHitCount = (double)(LLCHitCount[STORE_ACCESS] + LLCHitCount[LOAD_ACCESS]);
+  double totalMissCount = (double)(LLCMissCount[STORE_ACCESS] + LLCMissCount[LOAD_ACCESS])*SAMPLING_RATIO;
+  double totalHitCount = (double)(LLCHitCount[STORE_ACCESS] + LLCHitCount[LOAD_ACCESS])*SAMPLING_RATIO;
   double totalAccesses = totalMissCount + totalHitCount;
   out << "LLC Total Miss Count: " << totalMissCount << "\n";
   out << "LLC Total Hit Count: " << totalHitCount << "\n";
   out << "LLC Total Miss Ratio: " << (totalMissCount / totalAccesses)*100 << "%\n\n";
 
-  out << "Total number of bit transitions: " << totalTransitions << "\n";
+  out << "Total number of bit transitions: " << totalTransitions*SAMPLING_RATIO << "\n";
   out << "Bit entropy: " << bitEntropy << "\n\n";
   
   out << "Other metrics" << "\n";
   
   // DO NOT MODIFY BELOW CODE OUTPUT STRUCTURE
-  out << "Number of bytes with value:\n";
+  out << "Number of bytes with value:" << "\n";
   UINT64 totalBytes = 0;
   for (int i = 0; i < 256; ++i) {
-    totalBytes += counts[i];
-    out << i << ": " << counts[i] << "\n";
+    totalBytes += counts[i]*SAMPLING_RATIO;
+    out << i << ": " << counts[i]*SAMPLING_RATIO << "\n";
   }
 	
-  out << "Transition counts, bus-wise:\n";
+  out << "Number of times every byte is repeated:" << std::endl;
   for (int i = 0; i < 256; ++i)
-    for (int j = 0; j < 256; ++j)
-      out << i << "," << j << ": " << transition_counts_bw[i][j] << "\n";
+    out << i << ": " << same_bytes[i]*SAMPLING_RATIO << std::endl;
 
-  out << "Transition counts, transfer-wise:\n";
   for (int i = 0; i < 256; ++i)
     for (int j = 0; j < 256; ++j)
-      out << i << "," << j << ": " << transition_counts_tw[i][j] << "\n";
+      out << i << "," << j << ": " << transition_counts[i][j]*SAMPLING_RATIO << "\n";
   
   // DO NOT MODIFY ABOVE CODE OUTPUTSTRUCTURE
   
@@ -134,8 +134,10 @@ LOCALFUN VOID Fini(int code, VOID * v)
   cleanupCache();
 }
 
+bool enableSampling = true;
 LOCALFUN VOID CacheLoad(ADDRINT addr, UINT32 size)
 {
+  if(!enableSampling) return;
   ADDRINT highAddr = addr + size;
   do{
     AccessSingleLine(addr & LLC::notLineMask, LOAD_ACCESS);
@@ -145,6 +147,7 @@ LOCALFUN VOID CacheLoad(ADDRINT addr, UINT32 size)
 
 LOCALFUN VOID CacheStore(ADDRINT addr, UINT32 size)
 {
+  if(!enableSampling) return;
   ADDRINT highAddr = addr + size;
   do{
     AccessSingleLine(addr & LLC::notLineMask, STORE_ACCESS);
@@ -152,13 +155,24 @@ LOCALFUN VOID CacheStore(ADDRINT addr, UINT32 size)
   } while (addr < highAddr);
 }
 
+int sample_counter = 0;
 LOCALFUN VOID CacheLoadSingle(ADDRINT addr)
 {
+  sample_counter++;
+  if(sample_counter >= 100){
+    enableSampling = true;
+    sample_counter = 0;
+  }
+  else if(sample_counter == 10){
+    enableSampling = false;
+  }
+  if(!enableSampling) return;
   AccessSingleLine(addr & LLC::notLineMask, LOAD_ACCESS);
 }
 
 LOCALFUN VOID CacheStoreSingle(ADDRINT addr)
 {
+  if(!enableSampling) return;
   AccessSingleLine(addr & LLC::notLineMask, STORE_ACCESS);
 }
 
@@ -240,6 +254,7 @@ bool initCacheParams(void)
 
   initCache(LLC::cacheSize, LLC::lineSize, LLC::max_sets, LLC::associativity); 
   fill_hamming_lut();
+
   return true;
 }
 
