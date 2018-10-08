@@ -107,22 +107,20 @@ LOCALFUN VOID Fini(int code, VOID * v)
   out << "Other metrics" << "\n";
   
   // DO NOT MODIFY BELOW CODE OUTPUT STRUCTURE
-  out << "Number of bytes with value:\n";
-  UINT64 totalBytes = 0;
+  out << "Sequential 0 counts, bus-wise:\n";
+  for (int i = 0; i < 7; ++i)
+    out << i + 2 << ": " << consecutive_zero_counts_bw[i] << "\n";
+  
+  out << "\nSequential 0 counts, transfer-wise:\n";
+  for (int i = 0; i < 7; ++i)
+    out << i + 2 << ": " << consecutive_zero_counts_tw[i] << "\n";
+  
+  out << "\nNumber of bytes with value:\n";
   for (int i = 0; i < 256; ++i) {
-    totalBytes += counts[i];
     out << i << ": " << counts[i] << "\n";
   }
 
-  out << "Sequential 0 counts, bus-wise:\n";
-  for (int i = 0; i < 7; ++i)
-	out << i + 2 << consecutive_zero_counts_bw[i] << "\n";
-  
-  out << "Sequential 0 counts, transfer-wise:\n";
-  for (int i = 0; i < 7; ++i)
-    out << i + 2 << consecutive_zero_counts_tw[i] << "\n";
-  
-  out << "Transition counts, bus-wise:\n";
+  out << "\nTransition counts, bus-wise:\n";
   for (int i = 0; i < 256; ++i)
     for (int j = 0; j < 256; ++j)
       out << i << "," << j << ": " << transition_counts_bw[i][j] << "\n";
@@ -133,9 +131,6 @@ LOCALFUN VOID Fini(int code, VOID * v)
       out << i << "," << j << ": " << transition_counts_tw[i][j] << "\n";
 
   // DO NOT MODIFY ABOVE CODE OUTPUTSTRUCTURE
-  
-  out << "Total number of bytes transferred: " << totalBytes << "\n\n";
-  out << "Elapsed time: " << elapsed_time << "\n";
   
   out.close();
   delete[] lineBytes;

@@ -76,36 +76,34 @@ static inline UINT32 countTransitions(UINT8* startAddr, UINT32 len, UINT8 busWid
     for (UINT32 j=0; j<busWidth; ++j){
       
       b0 = *(curWord + j);
-       
-      transition_counts_tw[b0][b1]++;
-      
-	  zero_count_bw += (b0 == 0);
-	  if ((b0 != 0) || (j == busWidth - 1)) {
-				if (zero_count_bw > 1)
-					consecutive_zero_counts_bw[zero_count_bw - 2]++;
-				zero_count_bw = 0;
-			}
+            
+      zero_count_bw += (b0 == 0);
+      if ((b0 != 0) || (j == (busWidth - 1u))) {
+	if (zero_count_bw > 1)
+	  consecutive_zero_counts_bw[zero_count_bw - 2]++;
+	zero_count_bw = 0;
+      }
 	  
-	  if(j > 0)
-	    transition_counts_bw[*(curWord+j-1)][b0]++;
+      if(j > 0)
+	transition_counts_bw[*(curWord+j-1)][b0]++;
       
-	  counts[b0]++;
+      counts[b0]++;
       if (i != (num_words - 1)) {
-				b1 = *((curWord + j) + busWidth);
-				end_zero_count_tw = b0 | b1;
-				zero_count_tw[j] += !end_zero_count_tw;
-				if (end_zero_count_tw ) {
-					if (zero_count_tw[j] > 0)
-						consecutive_zero_counts_tw[zero_count_tw[j] - 1]++;
-					zero_count_tw[j] = 0;
-				}
-				count += hamming_lut[b0][b1];
-				transition_counts[b0][b1]++;
-			}
-			else {
-			if (zero_count_tw[j] > 0)
-					consecutive_zero_counts_tw[zero_count_tw[j] - 1]++;
-		}
+	b1 = *((curWord + j) + busWidth);
+	end_zero_count_tw = b0 | b1;
+	zero_count_tw[j] += !end_zero_count_tw;
+	if (end_zero_count_tw ) {
+	  if (zero_count_tw[j] > 0)
+	    consecutive_zero_counts_tw[zero_count_tw[j] - 1]++;
+	  zero_count_tw[j] = 0;
+	}
+	count += hamming_lut[b0][b1];
+	transition_counts_tw[b0][b1]++;
+      }
+      else {
+	if (zero_count_tw[j] > 0)
+	  consecutive_zero_counts_tw[zero_count_tw[j] - 1]++;
+      }
       
     }
     curWord += busWidth;
@@ -219,10 +217,10 @@ public:
     To search for a tag in a set of cache lines (or blocks), we use the doubly linked std::list.
     - If we have a hit, we return true, if not, we return false.
     - If we do not have a hit, we evict the last cache block. 
-        Also: 
-        - If the evicted cacheline was dirty, we return its address in ADDRINT* evicted,
-            otherwise we just throw it away over our shoulder and set ADDRINT* evicted to NULL.
-        - We set the value of CACHE_BLOCK* block to point to the newly added cache block.
+    Also: 
+    - If the evicted cacheline was dirty, we return its address in ADDRINT* evicted,
+    otherwise we just throw it away over our shoulder and set ADDRINT* evicted to NULL.
+    - We set the value of CACHE_BLOCK* block to point to the newly added cache block.
     - accessType parameter sent in should reflect if this func is called from a load or store instruction
   */
   bool FindReplace(ADDRINT tag, ADDRINT addr, ACCESS_TYPE accessType, ADDRINT* evicted){
@@ -237,8 +235,8 @@ public:
       if(cacheHit){ //if it is a hit!
 	//		std::cout << "it's a hit\n";
 	(*it)->dirty |= (accessType == STORE_ACCESS); //we set the dirty bit if this is a store
-	  //if ((*it)->dirty && (accessType == STORE_ACCESS))
-	  //(*it)->dirty = true; //we set the dirty bit if this is a store
+	//if ((*it)->dirty && (accessType == STORE_ACCESS))
+	//(*it)->dirty = true; //we set the dirty bit if this is a store
 	//	std::cout << "checking if in begin\n";
 	if(i != 0){ //if the hit is not at the beginning of the list
 	  //	  std::cout << "not at begin!\n";
