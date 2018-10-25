@@ -140,8 +140,21 @@ LOCALFUN VOID Fini(int code, VOID * v)
 LOCALFUN VOID CacheLoad(ADDRINT addr, UINT32 size)
 {
   ADDRINT highAddr = addr + size;
+  ADDRINT nextLineStart;
+  UINT32 bytesReadInLine; //this will keep how many bytes that will
+  //be accessed from the line that is being accessed for each iter.
   do{
-    AccessSingleLine(addr & LLC::notLineMask, LOAD_ACCESS);
+    //
+    ADDRINT nextLineStart = (addr & LLC::notLineMask) + LLC::lineSize;
+
+    //if the access is spilling to the next cache line
+    if((addr + size) > nextLineStart){
+      bytesReadInLine = nextLineStart - addr;
+      size = size - bytesReadInLine;
+    }
+
+    UINT32 thisLineSize = 
+    AccessSingleLine(addr /*& LLC::notLineMask*/, size, LOAD_ACCESS);
     addr = (addr & LLC::notLineMask) + LLC::lineSize;
   } while (addr < highAddr);
 }
@@ -150,19 +163,19 @@ LOCALFUN VOID CacheStore(ADDRINT addr, UINT32 size)
 {
   ADDRINT highAddr = addr + size;
   do{
-    AccessSingleLine(addr & LLC::notLineMask, STORE_ACCESS);
+    AccessSingleLine(addr /*& LLC::notLineMask*/, size, STORE_ACCESS);
     addr = (addr & LLC::notLineMask) + LLC::lineSize;
   } while (addr < highAddr);
 }
 
 LOCALFUN VOID CacheLoadSingle(ADDRINT addr)
 {
-  AccessSingleLine(addr & LLC::notLineMask, LOAD_ACCESS);
+  AccessSingleLine(addr /*& LLC::notLineMask*/, size, LOAD_ACCESS);
 }
 
 LOCALFUN VOID CacheStoreSingle(ADDRINT addr)
 {
-  AccessSingleLine(addr & LLC::notLineMask, STORE_ACCESS);
+  AccessSingleLine(addr /*& LLC::notLineMask*/, size, STORE_ACCESS);
 }
 
 LOCALFUN VOID Instruction(INS ins, VOID *v)
