@@ -1,4 +1,0 @@
-Pin: pin-3.6-97554-31f0a167d
-Copyright (c) 2003-2017, Intel Corporation. All rights reserved.
-A:  memtrans_cache_multi.H: initCache: 260: assertion failed: IsPower2(_setIndexMask + 1)
-

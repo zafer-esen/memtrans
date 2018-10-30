@@ -7,4 +7,4 @@
 
 #../../../pin -t obj-intel64/memtrans_multi.so -o memtrans_multi.out -s 4194304 -a $1 -- ls
 
-../../../pin -t obj-intel64/memtrans_multi.so -o memtrans_multi.out -s $1 -a $2 -- ls
+../../../pin -t obj-intel64/memtrans_multi.so -o memtrans_multi.out -s $1 -a $2 -ic 0 -- ls

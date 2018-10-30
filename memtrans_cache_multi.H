@@ -200,6 +200,13 @@ typedef struct CACHE_BLOCK
 }CACHE_BLOCK;
 
 UINT32 _associativity = 1; //do not create LRU sets before changing this, if more than 1 associativity required
+ADDRINT _lineSize;
+// computed params
+ADDRINT _lineShift;
+ADDRINT _setIndexMask;
+ADDRINT _lineMask;
+ADDRINT _notLineMask;
+
 class LRU
 {
 public: 
@@ -229,9 +236,9 @@ public:
     - We set the value of CACHE_BLOCK* block to point to the newly added cache block.
     - accessType parameter sent in should reflect if this func is called from a load or store instruction
   */
-  bool FindReplace(ADDRINT tag, ADDRINT addr, ACCESS_TYPE accessType, ADDRINT* evicted, 
+  bool FindReplace(ADDRINT tag, ADDRINT lineStart, ACCESS_TYPE accessType, ADDRINT* evicted, 
 		   UINT32 accessStart, UINT32 accessSize){
-    bool cacheHit;
+    bool cacheHit = false;
     list<CACHE_BLOCK*>::iterator it, it_next;
     //  std::cout << "list size: " << cb_list.size() << "\n";
     
@@ -247,12 +254,12 @@ public:
 	//	std::cout << "checking if in begin\n";
 
 	//set the reused fields for all the accessed bytes in the cache line,
-	//so, the cache line utilization can be calculate.
+	//so, the cache line utilization can be calculated.
 	for(UINT32 j = accessStart; j < (accessStart+accessSize); ++j){
 	  (*it)->reused[j] = true;
 	}
-	//TODO: here it is not known which values are reused, so we need to do a memcpy to get that info :(
-	// luckily, we probably will not need to copy the whole cache line (only accessSize bytes)
+	// this field needs to be checked when the cache line is being evicted
+	// and the counts for each value should be set accordingly
 
 	if(i != 0){ //if the hit is not at the beginning of the list
 	  //	  std::cout << "not at begin!\n";
@@ -271,13 +278,28 @@ public:
       std::advance(it, -1); //this should now point to the back of the list (LRU)
       *evicted = (*it)->dirty ? (*it)->addr : (UINT32)0;  //if what we are going to throw away is a dirty cache block
       // at this point we can safely overwrite the evicted cache block
+
+      // before overwriting the old values, we need to count reuse values
+      // first read the byte values from the memory
+      PIN_SafeCopy(lineBytes, (void*)((*it)->addr), (UINT32)_lineSize);
+      // then for each byte, increment its reuse counter
+      for(UINT32 i=0; i<_lineSize; ++i)
+	reuse_counts[lineBytes[i]] += (*it)->reused[i];
+
       //std::cout << "evicted, now replacing!\n";
       (*it)->tag = tag;
-      (*it)->addr = addr; // TODO: evaluate if we really need this...
-      (*it)->dirty = (accessType == STORE_ACCESS); //this update ensures that if the new call was a store, we set the block to dirty
+      (*it)->addr = lineStart; // TODO: evaluate if we really need this...
+      (*it)->dirty = (accessType == STORE_ACCESS); //this update ensures that if the new call was a store, we set the block to dirty     
       (*it)->reused.reset(); //this resets the cache line utilization bits
       // finally move the cache block to the front, if associativity is more than 1
       //std::cout << "moving to beginning!\n";
+
+      //set the reused fields (in this case first use) for all the accessed bytes in the brought in cache line,
+      //so, the cache line utilization can be calculated.
+	for(UINT32 j = accessStart; j < (accessStart+accessSize); ++j){
+	  (*it)->reused[j] = true;
+	}
+      
       if (_associativity > 1)
 	cb_list.splice( cb_list.begin(), cb_list, 
 			it, cb_list.end());  //this moves it to the beginning of the list (MRU) 
@@ -287,16 +309,8 @@ public:
     return cacheHit;
   }
 };
- 
 
 LRU * _sets;
-UINT32 _lineSize;
-// computed params
-UINT32 _lineShift;
-UINT32 _setIndexMask;
-UINT32 _lineMask;
-UINT32 _notLineMask;
-
 
 void initCache(UINT32 cacheSize, UINT32 lineSize, UINT32 max_sets, UINT32 associativity)
 {
@@ -316,42 +330,89 @@ void cleanupCache(void)
   delete[] _sets;
 }
   
-static inline void AccessSingleLine(ADDRINT addr, UINT32 accessSize, ACCESS_TYPE accessType)
+static inline void LLCAccess(ADDRINT addr, UINT32 size,
+				    ACCESS_TYPE accessType)
 {
-  ADDRINT tag = addr >> _lineShift;
-  ADDRINT lineStart = addr & _notLineMask; //the beginning of the accessed line, for data movement purposes
-  ADDRINT accessStart = addr & _lineMask; //the beginning of the accessed data, inside the line (accessSize
-  //marks the end of the accessed bytes)
-  UINT32 setIndex = tag & _setIndexMask;
-  LRU &set = _sets[setIndex];
+  ADDRINT highAddr = addr + size;
+  ADDRINT accessAddrStart = addr; // this holds the start position of
+                                  // the accesses at each iteration
 
-  ADDRINT evicted_block_addr = 0;
-  bool hit = set.FindReplace(tag, lineStart, accessType, &evicted_block_addr, accessStart, accessSize);
-  if (!hit){
-    if(evicted_block_addr){ //if the evicted block was dirty (i.e. writeback to memory)
-      // get statistics from the evicted cache block
-      PIN_SafeCopy(lineBytes, (void*)evicted_block_addr, (UINT32)_lineSize);
-      totalTransitions += countTransitions((UINT8*)lineBytes, (UINT32)_lineSize, 8); // bus width assumed 8 bytes
-      LLCEvictCount++;
+  //  static UINT32 maxSize = 0;
+  //  if(size>maxSize){
+  //    maxSize = size;
+  //      std::cout << "max size increased: " << maxSize << "\n";
+  //  }
+  //  std::cout << "    addr: " << addr << "\n";
+  //  std::cout << "highAddr: " << highAddr << "\n";
+  //  std::cout << "    size: " << size << "\n";
+  
+  // the mask operation gives the beginning of this cache line
+  ADDRINT thisLineStart = addr & _notLineMask;
+  ADDRINT nextLineStart = thisLineStart + _lineSize;
+  //  std::cout << "thisline: " << thisLineStart << "\n";
+  //  std::cout << "nextline: " << nextLineStart << "\n";
 
-      //TODO: here we also need to check the cache line utilization
-
-      /*std::cout << "Load store evict @ index: " << setIndex << "\nValues written: ";
-	for (int i = 0; i<_lineSize/4 - 1; ++i)
-	std::cout << ((int*)lineBytes)[i] << ", ";
-	std::cout << ((int*)lineBytes)[_lineSize/4 - 1] << "\n";*/
+  do{
+    // std::cout << "thisline: " << thisLineStart << "\n";
+    //std::cout << "nextline: " << nextLineStart << "\n";
+    // check if the access will span more than a single cache line
+    // TODO: this check might be moved to instrumentation so we do not
+    // have this branch during analysis
+    UINT32 bytesReadInLine;
+    if((accessAddrStart + size) > nextLineStart){
+      //      std::cout << "more than one cl being read!, size: " << size << "\n";
+      // how many bytes will be read from the current line?
+      bytesReadInLine = nextLineStart - addr;
+      size -= bytesReadInLine;
     }
-    // update the cache to hold the new tag, new addr and set it to valid
-    PIN_SafeCopy(lineBytes, (void*)addr, (UINT32)_lineSize);
-    totalTransitions += countTransitions((UINT8*)lineBytes, (UINT32)_lineSize, 8); // bus width assumed 8 bytes
-    LLCMissCount[accessType]++;
-    /*std::cout << "Load LLC miss @ index: " << setIndex << "\nValues read: ";
-      for (int i = 0; i<_lineSize / 4 - 1; ++i)
-      std::cout << ((int*)lineBytes)[i] << ", ";
-      std::cout << ((int*)lineBytes)[_lineSize / 4 - 1] << "\n";*/
-  }
-  else
-    LLCHitCount[accessType]++;  
+    else{
+      bytesReadInLine = size;
+    }
+
+    ADDRINT tag = addr >> _lineShift;
+    ADDRINT accessStart = addr & _lineMask;  // the beginning of the accessed
+    // data, inside the cache line
+
+    UINT32 setIndex = tag & _setIndexMask;
+    LRU &set = _sets[setIndex];      
+    
+    ADDRINT evicted_block_addr = 0;
+    bool hit = set.FindReplace(tag, thisLineStart, accessType, &evicted_block_addr,
+			       accessStart, bytesReadInLine);      
+
+    if (!hit){
+      if(evicted_block_addr){ //if the evicted block was dirty
+	//(i.e. writeback to memory)
+	// get statistics from the evicted cache block
+	PIN_SafeCopy(lineBytes, (void*)evicted_block_addr, (UINT32)_lineSize);
+	totalTransitions += countTransitions((UINT8*)lineBytes, 
+					     (UINT32)_lineSize, 8);
+	// bus width: assumed 8 bytes
+
+	LLCEvictCount++;
+
+	/*std::cout << "Load store evict @ index: " << setIndex << "\nValues written: ";
+	  for (int i = 0; i<_lineSize/4 - 1; ++i)
+	  std::cout << ((int*)lineBytes)[i] << ", ";
+	  std::cout << ((int*)lineBytes)[_lineSize/4 - 1] << "\n";*/
+      }
+      // update the cache to hold the new tag, new addr and set it to valid
+      PIN_SafeCopy(lineBytes, (void*)thisLineStart, (UINT32)_lineSize);
+      totalTransitions += countTransitions((UINT8*)lineBytes, (UINT32)_lineSize, 8);
+      // bus width assumed 8 bytes
+      LLCMissCount[accessType]++;
+      /*std::cout << "Load LLC miss @ index: " << setIndex << "\nValues read: ";
+	for (int i = 0; i<_lineSize / 4 - 1; ++i)
+	std::cout << ((int*)lineBytes)[i] << ", ";
+	std::cout << ((int*)lineBytes)[_lineSize / 4 - 1] << "\n";*/
+    }
+    else
+      LLCHitCount[accessType]++;  
+    
+    accessAddrStart = nextLineStart; //the next access should start from the next line
+    thisLineStart = nextLineStart; //this is same as accessAddrStart if i>0
+    nextLineStart = thisLineStart + _lineSize; //also update the next line's start
+  }while(thisLineStart < highAddr); 
 }
 
 #endif

@@ -102,10 +102,20 @@ LOCALFUN VOID Fini(int code, VOID * v)
   out << "LLC Total Miss Ratio: " << (totalMissCount / totalAccesses)*100 << "%\n\n";
 
   out << "Total number of bit transitions: " << totalTransitions << "\n";
-  out << "Bit entropy: " << bitEntropy << "\n\n";
+  out << "Bit entropy: " << bitEntropy << "\n";
+
+  double reuse_ratios[256];
+  double total_reuse_ratio = 0.0;
+  for (int i = 0; i < 256; ++i)
+    reuse_ratios[i] = ((double)reuse_counts[i])/((double)counts[i]);
+  for (int i = 0; i < 256; ++i){
+    total_reuse_ratio += reuse_ratios[i];
+  }
+  total_reuse_ratio/=256;
+  out << "Cache line utilization ratio: " << total_reuse_ratio << "\n\n";
   
   out << "Other metrics" << "\n";
-  
+
   // DO NOT MODIFY BELOW CODE OUTPUT STRUCTURE
   out << "Sequential 0 counts, bus-wise:\n";
   for (int i = 0; i < 7; ++i)
@@ -131,6 +141,17 @@ LOCALFUN VOID Fini(int code, VOID * v)
       out << i << "," << j << ": " << transition_counts_tw[i][j] << "\n";
 
   // DO NOT MODIFY ABOVE CODE OUTPUTSTRUCTURE
+
+  // the values inside the array are set even if the value is used only one time
+  // after being brought in
+  out << "\nReuse counts for values brought in to the cache:\n";
+  for (int i = 0; i < 256; ++i) {
+    out << i << ": " << reuse_counts[i] << "\n";
+  }
+  out << "\nReuse ratios for values brought in to the cache:\n";
+  for (int i = 0; i < 256; ++i)
+    out << i << ": " << reuse_ratios[i] << "\n";
+  
   
   out.close();
   delete[] lineBytes;
@@ -139,89 +160,55 @@ LOCALFUN VOID Fini(int code, VOID * v)
 
 LOCALFUN VOID CacheLoad(ADDRINT addr, UINT32 size)
 {
-  ADDRINT highAddr = addr + size;
-  ADDRINT nextLineStart;
-  UINT32 bytesReadInLine; //this will keep how many bytes that will
-  //be accessed from the line that is being accessed for each iter.
-  do{
-    //
-    ADDRINT nextLineStart = (addr & LLC::notLineMask) + LLC::lineSize;
-
-    //if the access is spilling to the next cache line
-    if((addr + size) > nextLineStart){
-      bytesReadInLine = nextLineStart - addr;
-      size = size - bytesReadInLine;
-    }
-
-    UINT32 thisLineSize = 
-    AccessSingleLine(addr /*& LLC::notLineMask*/, size, LOAD_ACCESS);
-    addr = (addr & LLC::notLineMask) + LLC::lineSize;
-  } while (addr < highAddr);
+  LLCAccess(addr, size, LOAD_ACCESS);
 }
 
 LOCALFUN VOID CacheStore(ADDRINT addr, UINT32 size)
 {
-  ADDRINT highAddr = addr + size;
-  do{
-    AccessSingleLine(addr /*& LLC::notLineMask*/, size, STORE_ACCESS);
-    addr = (addr & LLC::notLineMask) + LLC::lineSize;
-  } while (addr < highAddr);
-}
-
-LOCALFUN VOID CacheLoadSingle(ADDRINT addr)
-{
-  AccessSingleLine(addr /*& LLC::notLineMask*/, size, LOAD_ACCESS);
-}
-
-LOCALFUN VOID CacheStoreSingle(ADDRINT addr)
-{
-  AccessSingleLine(addr /*& LLC::notLineMask*/, size, STORE_ACCESS);
+  LLCAccess(addr, size, STORE_ACCESS);
 }
 
 LOCALFUN VOID Instruction(INS ins, VOID *v)
 {
+  // TODO: if we are going to use SimPoint/PinPlay, we need to
+  // normalize against the number of instructions, so we must
+  // also have an instruction count. E.g. MPI: misses/inst.
+
   // all instruction fetches access I-cache
   if(knob_sim_inst == 1)
     INS_InsertCall(
-		   ins, IPOINT_BEFORE, (AFUNPTR)CacheLoadSingle,
+		   ins, IPOINT_BEFORE, (AFUNPTR)CacheLoad,
 		   IARG_INST_PTR,
+		   IARG_UINT32, 4, //TOOD: is this correct?
 		   IARG_END);
   if (INS_IsMemoryRead(ins) && INS_IsStandardMemop(ins))
     {
+      //TODO: this part can be slightly optimized by adding another
+      //analysis function where the memory access covers only a single
+      //cache line (this was done before, but was implemented wrong)
+      
       // only predicated-on memory instructions access D-cache
-      UINT32 size = INS_MemoryReadSize(ins);
-      if(size <= LLC::lineSize){
-	INS_InsertPredicatedCall(
-				 ins, IPOINT_BEFORE, (AFUNPTR)CacheLoadSingle,
-				 IARG_MEMORYREAD_EA,
-				 IARG_END);
-      }
-      else{
-	INS_InsertPredicatedCall(
-				 ins, IPOINT_BEFORE, (AFUNPTR)CacheLoad,
-				 IARG_MEMORYREAD_EA,
-				 IARG_MEMORYREAD_SIZE,
-				 IARG_END);
-      }
+      //      UINT32 size = INS_MemoryReadSize(ins);
+      INS_InsertPredicatedCall(
+			       ins, IPOINT_BEFORE, (AFUNPTR)CacheLoad,
+			       IARG_MEMORYREAD_EA,
+			       IARG_MEMORYREAD_SIZE,
+			       IARG_END);
     }
 
   if (INS_IsMemoryWrite(ins) && INS_IsStandardMemop(ins))
     {
+      //TODO: this part can be slightly optimized by adding another
+      //analysis function where the memory access covers only a single
+      //cache line (this was done before, but was implemented wrong)
+
       // only predicated-on memory instructions access D-cache
-      UINT32 size = INS_MemoryWriteSize(ins);
-      if(size <= LLC::lineSize){
-	INS_InsertPredicatedCall(
-				 ins, IPOINT_BEFORE, (AFUNPTR)CacheStoreSingle,
-				 IARG_MEMORYWRITE_EA,
-				 IARG_END);
-      }
-      else{
+      //      UINT32 size = INS_MemoryWriteSize(ins);
 	INS_InsertPredicatedCall(
 				 ins, IPOINT_BEFORE, (AFUNPTR)CacheStore,
 				 IARG_MEMORYWRITE_EA,
 				 IARG_MEMORYWRITE_SIZE,
 				 IARG_END);
-      }
     }
 }
 
