@@ -214,6 +214,11 @@ memory_limit.test: $(OBJDIR)memory_limit$(PINTOOL_SUFFIX) $(TESTAPP)
 #
 ##############################################################
 
+PINPLAY_HOME=$(PIN_ROOT)/extras/pinplay/
+PINPLAY_INCLUDE_HOME=$(PINPLAY_HOME)/include
+PINPLAY_LIB_HOME=$(PINPLAY_HOME)/lib/$(TARGET)
+EXT_LIB_HOME=$(PINPLAY_HOME)/lib-ext/$(TARGET)
+
 # This section contains the build rules for all binaries that have special build rules.
 # See makefile.default.rules for the default build rules.
 
@@ -228,3 +233,10 @@ $(OBJDIR)access_protection_app$(EXE_SUFFIX): access_protection_app.cpp
 
 $(OBJDIR)new_delete_app$(EXE_SUFFIX): new_delete_app.cpp $(THREADLIB)
 	$(APP_CXX) $(COMPONENT_INCLUDES) $(APP_CXXFLAGS) $(COMP_EXE)$@ $^ $(APP_LDFLAGS) $(APP_LPATHS) $(APP_LIBS) $(APP_LIB_ATOMIC) $(CXX_LPATHS) $(CXX_LIBS)
+
+$(OBJDIR)memtrans_multi_pinplay$(PINTOOL_SUFFIX): $(OBJDIR)memtrans_multi_pinplay$(OBJ_SUFFIX) $(PINPLAY_LIB_HOME)/libpinplay.a $(EXT_LIB_HOME)/libbz2.a $(EXT_LIB_HOME)/libzlib.a $(CONTROLLERLIB)
+						  $(LINKER) $(TOOL_LDFLAGS) $(LINK_EXE)$@ $< /home/zafer/proj-mtstat/sampling/pinplay-3.5//extras/pinplay//lib/intel64/libpinplay.a /home/zafer/proj-mtstat/sampling/pinplay-3.5//extras/pinplay//lib-ext/intel64/libbz2.a /home/zafer/proj-mtstat/sampling/pinplay-3.5//extras/pinplay//lib-ext/intel64/libzlib.a -L$(PIN_ROOT)/extras/pinplay/lib/intel64 $(CONTROLLERLIB)  $(TOOL_LPATHS) $(TOOL_LIBS)
+
+$(OBJDIR)memtrans_multi_pinplay$(OBJ_SUFFIX): memtrans_multi_pinplay.cpp  memtrans_cache_multi.H
+					      if [ ! -d "$(OBJDIR)" ]; then mkdir $(OBJDIR); fi
+					      $(CXX) $(TOOL_CXXFLAGS) -I$(PIN_ROOT)/extras/pinplay/include $(COMP_OBJ) $@ $<

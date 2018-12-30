@@ -1,0 +1,12 @@
+#!/bin/bash
+# Runs the memory transitions app
+
+#../../../pin -t obj-intel64/memtrans_multi.so -o memtrans_multi.out -s 12582912 -ic 1 -a 16 -- ls
+
+#../../../pin -t obj-intel64/memtrans_multi.so -o memtrans_multi.out -s 65536 -a 4 -- ls
+
+#../../../pin -t obj-intel64/memtrans_multi.so -o memtrans_multi.out -s 4194304 -a $1 -- ls
+
+
+#export LD_LIBRARY_PATH=/usr/local/cuda-10.0/lib64${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}
+../../../pin -t obj-intel64/memtrans_multi_pinplay.so -o memtrans_multi.out -s $1 -a $2 -ic 0 -- ls

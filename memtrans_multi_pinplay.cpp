@@ -37,6 +37,7 @@
 #include <fstream>
 #include <cstdint>
 #include "pin.H"
+#include "pinplay.H"
 #include "instlib.H"
 #include <time.h>
 
@@ -46,12 +47,19 @@ typedef UINT32 CACHE_STATS; // type of cache hit/miss counters
 
 #include "memtrans_cache_multi.H"
 
+// should be linked with libpinplay.a, libzlib.a, libbz2.a
+PINPLAY_ENGINE pinplay_engine;
+
+#define KNOB_LOG_NAME "log"
+#define KNOB_REPLAY_NAME "replay"
+#define KNOB_FAMILY "pintool:pinplay-driver"
+
 //================================================================================
 // Knobs
 //================================================================================
 ofstream out;
 KNOB<string> knob_output(KNOB_MODE_WRITEONCE, "pintool",
-			 "o", "memtrans.out", "specify log file name");
+			 "statfile", "memtrans.out", "specify log file name");
 KNOB<UINT32> knob_size(KNOB_MODE_WRITEONCE, "pintool",
 		       "s", "8388608", "Cache size (bytes)");
 KNOB<UINT32> knob_associativity(KNOB_MODE_WRITEONCE, "pintool", 
@@ -60,6 +68,13 @@ KNOB<UINT32> knob_line_size(KNOB_MODE_WRITEONCE, "pintool",
 			    "l", "64", "Cache line size");
 KNOB<UINT32> knob_sim_inst(KNOB_MODE_WRITEONCE, "pintool",
 			   "ic", "1", "Instruction cache simulation (default: off)");
+
+KNOB_COMMENT pinplay_driver_knob_family(KNOB_FAMILY, "PinPlay Driver Knobs");
+
+KNOB<BOOL> knob_replayer(KNOB_MODE_WRITEONCE, KNOB_FAMILY,
+			 KNOB_REPLAY_NAME, "0", "Replay a pinball");
+KNOB<BOOL> knob_logger(KNOB_MODE_WRITEONCE, KNOB_FAMILY,
+		       KNOB_LOG_NAME, "0", "Create a pinball");
 
 namespace LLC
 {
@@ -263,6 +278,8 @@ GLOBALFUN int main(int argc, char *argv[])
   INS_AddInstrumentFunction(Instruction, 0);
   PIN_AddFiniFunction(Fini, 0);
 
+  pinplay_engine.Activate(argc, argv, knob_logger, knob_replayer);
+  
   // Never returns
   PIN_StartProgram();
 

@@ -190,11 +190,12 @@ void fill_hamming_lut(void)
  *  @brief Cache set direct mapped
  */
 
+#define CACHE_LINE_SIZE 64
 typedef struct CACHE_BLOCK
 {
   ADDRINT tag;
   ADDRINT addr;
-  std::bitset<8> reused; //TODO: change this to by dynamic so it can handle cache lines bigger than 8 bytes
+  std::bitset<CACHE_LINE_SIZE> reused; //TODO: change this to by dynamic so it can handle cache lines bigger than 64 bytes
                           //std::vector<bool> ?
   bool dirty;
 }CACHE_BLOCK;
@@ -285,6 +286,8 @@ public:
       // then for each byte, increment its reuse counter
       for(UINT32 i=0; i<_lineSize; ++i)
 	reuse_counts[lineBytes[i]] += (*it)->reused[i];
+
+      //TODO: Here we should count all the evicted byte's values, so we normalize against it, not against the total bytes transferred.
 
       //std::cout << "evicted, now replacing!\n";
       (*it)->tag = tag;
@@ -384,9 +387,12 @@ static inline void LLCAccess(ADDRINT addr, UINT32 size,
       if(evicted_block_addr){ //if the evicted block was dirty
 	//(i.e. writeback to memory)
 	// get statistics from the evicted cache block
-	PIN_SafeCopy(lineBytes, (void*)evicted_block_addr, (UINT32)_lineSize);
+	//PIN_SafeCopy(lineBytes, (void*)evicted_block_addr, (UINT32)_lineSize);
 	totalTransitions += countTransitions((UINT8*)lineBytes, 
 					     (UINT32)_lineSize, 8);
+	// TODO: we just copied these bytes in FindReplace, why copy them again here?
+	// TODO: removed it, but better check it out if it works correctly
+
 	// bus width: assumed 8 bytes
 
 	LLCEvictCount++;

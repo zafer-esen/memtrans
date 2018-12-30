@@ -1,0 +1,3 @@
+#!/bin/bash
+# Builds the memory transitions app
+make obj-intel64/memtrans_multi_pinplay.so

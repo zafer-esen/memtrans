@@ -30,3 +30,14 @@
 *.exe
 *.out
 *.app
+
+**global.dat**
+**info.cfg**
+**info.status
+**.Data**
+**simpoint_out.txt
+**.pp**
+**~
+**#
+pinball/**
+whole_program**
