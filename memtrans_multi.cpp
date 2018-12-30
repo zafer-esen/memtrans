@@ -107,7 +107,7 @@ LOCALFUN VOID Fini(int code, VOID * v)
   double reuse_ratios[256];
   double total_reuse_ratio = 0.0;
   for (int i = 0; i < 256; ++i)
-    reuse_ratios[i] = ((double)reuse_counts[i])/((double)counts[i]);
+    reuse_ratios[i] = ((double)reuse_counts[i])/((double)evicted_counts[i]);
   for (int i = 0; i < 256; ++i){
     total_reuse_ratio += reuse_ratios[i];
   }

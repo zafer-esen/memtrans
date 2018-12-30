@@ -240,3 +240,10 @@ $(OBJDIR)memtrans_multi_pinplay$(PINTOOL_SUFFIX): $(OBJDIR)memtrans_multi_pinpla
 $(OBJDIR)memtrans_multi_pinplay$(OBJ_SUFFIX): memtrans_multi_pinplay.cpp  memtrans_cache_multi.H
 					      if [ ! -d "$(OBJDIR)" ]; then mkdir $(OBJDIR); fi
 					      $(CXX) $(TOOL_CXXFLAGS) -I$(PIN_ROOT)/extras/pinplay/include $(COMP_OBJ) $@ $<
+
+$(OBJDIR)memtrans_multi$(PINTOOL_SUFFIX): $(OBJDIR)memtrans_multi$(OBJ_SUFFIX)
+						  $(LINKER) $(TOOL_LDFLAGS) $(LINK_EXE)$@ $< $(TOOL_LPATHS) $(TOOL_LIBS)
+
+$(OBJDIR)memtrans_multi$(OBJ_SUFFIX): memtrans_multi.cpp  memtrans_cache_multi.H
+					      if [ ! -d "$(OBJDIR)" ]; then mkdir $(OBJDIR); fi
+					      $(CXX) $(TOOL_CXXFLAGS) -I$(PIN_ROOT)/source/include/pin/ $(COMP_OBJ) $@ $<

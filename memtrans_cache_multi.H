@@ -53,6 +53,7 @@ UINT64 consecutive_zero_counts_bw[7] = { 0 };
 UINT64 consecutive_zero_counts_tw[7] = { 0 };
 UINT64 reuse_counts[256] = { 0 }; //for each byte value, increments the count 
   //for that byte if it was reused after being brought in to the cache
+UINT64 evicted_counts[256] = { 0 }; //incremented for each value being evicted from the cache. this is necessary so reuse_counts are normalized against the eviced_counts (counts[256] includes all byte transfers, not only evictions).
 
 /*
   -----> transfer-wise		
@@ -278,16 +279,17 @@ public:
       //it should already be pointing to the end of the list, so we go one back
       std::advance(it, -1); //this should now point to the back of the list (LRU)
       *evicted = (*it)->dirty ? (*it)->addr : (UINT32)0;  //if what we are going to throw away is a dirty cache block
+
       // at this point we can safely overwrite the evicted cache block
 
       // before overwriting the old values, we need to count reuse values
       // first read the byte values from the memory
       PIN_SafeCopy(lineBytes, (void*)((*it)->addr), (UINT32)_lineSize);
-      // then for each byte, increment its reuse counter
-      for(UINT32 i=0; i<_lineSize; ++i)
+      // then for each byte, increment its reuse counter and the evicted byte counts
+      for(UINT32 i=0; i<_lineSize; ++i){
 	reuse_counts[lineBytes[i]] += (*it)->reused[i];
-
-      //TODO: Here we should count all the evicted byte's values, so we normalize against it, not against the total bytes transferred.
+	evicted_counts[lineBytes[i]]++;
+      }
 
       //std::cout << "evicted, now replacing!\n";
       (*it)->tag = tag;

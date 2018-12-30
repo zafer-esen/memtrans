@@ -41,3 +41,6 @@
 **#
 pinball/**
 whole_program**
+
+# Eclipse IDE project
+.project
